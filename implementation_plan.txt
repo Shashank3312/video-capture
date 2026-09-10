@@ -1,0 +1,211 @@
+========================================================================
+PROJECT: "Don't Miss The Moment" - Notify me when my favorite person
+         is about to perform/play/appear, instead of me watching the
+         whole event live.
+========================================================================
+
+------------------------------------------------------------------------
+1. CORE IDEA
+------------------------------------------------------------------------
+User gives:
+  - A live event source (sports match, pre-release/political event,
+    or a local event video/stream)
+  - A photo (and/or name) of their favorite person
+  - Optionally a time limit ("watch for 1 hour, then ask again")
+
+The app watches the event on the user's behalf and sends a
+notification the moment that person is about to appear/play/perform,
+so the user doesn't have to watch the whole thing.
+
+V1 = notifications only.
+V2 (later) = actually ring/call the user instead of just notifying
+             (via Twilio Voice).
+
+
+------------------------------------------------------------------------
+2. FEASIBILITY / DIFFICULTY SUMMARY
+------------------------------------------------------------------------
+- Doable, but a multi-month project (not a weekend project), touching:
+  video/audio ingestion, structured sports data APIs, face recognition,
+  speech-to-text, a backend, push notifications, and a mobile-friendly
+  web app.
+- Biggest non-coding risks:
+    a) Access/legality of the video source. Big paid platforms
+       (e.g. Hotstar) can't just be scraped. YouTube Live works for
+       content that's genuinely public there (news orgs streaming
+       political events/press conferences, official movie pre-release
+       event streams). Big league sports (e.g. IPL) are usually NOT
+       freely available this way.
+    b) Face recognition accuracy on real broadcast footage (small,
+       angled, motion-blurred faces) is harder than matching clean
+       reference photos - must be tested early.
+    c) Cost/scale: a public app with many users needs shared jobs
+       (see section 6) or compute cost scales per-user instead of
+       per-event.
+- Recommended path: build as a personal single-user tool first
+  (Phases 0-4), prove it works reliably, THEN open it up to other
+  users (Phases 5+).
+
+
+------------------------------------------------------------------------
+3. THE THREE EVENT TYPES -> TWO WATCHER TRACKS
+------------------------------------------------------------------------
+
+TRACK A - SPORTS (scoreboard-based, no video/ML needed at all)
+  - Instead of watching video, poll a live sports scoreboard/data API.
+  - Check who is currently batting/bowling (cricket), serving (tennis),
+    etc. and compare against the favorite player's name.
+  - Cheapest and most reliable track - no video processing, no ML.
+  - Works cleanly for sports with 1-2 "active" players at a time
+    (cricket batting/bowling, tennis serving).
+  - Sports with many players active at once (football, basketball)
+    need a different signal (e.g. goal/substitution events) - decide
+    per sport later.
+  - Needs research per sport: find a live cricket/sport scoreboard API
+    (e.g. CricketData.org, Cricbuzz via RapidAPI, or similar - compare
+    options and pricing when we start building this track).
+
+TRACK B - GENERAL STREAM WATCHER (video face-matching)
+  Used for BOTH:
+    - Local events (no other option exists - must watch video)
+    - Pre-release / political events (chosen over pure caption-reading,
+      because face-matching is a more reliable "he is on screen now"
+      signal than relying on someone saying his name out loud)
+
+  Core pipeline:
+    1. Get the real playable stream URL from the given link (yt-dlp).
+    2. Pull frames from the live stream at intervals (ffmpeg).
+    3. Run face detection + compare against the reference photo
+       (face_recognition / DeepFace library).
+    4. On a confident match, fire a notification:
+         "He's on screen now" (visual, high confidence)
+
+  OPTIONAL ADD-ON (opt-in toggle per job, NOT default):
+    "Also notify me if someone says his name"
+    - Reuses the SAME ffmpeg stream ingestion (video + audio pulled
+      together, no duplicate download).
+    - Runs speech-to-text on the audio track, searches the rolling
+      transcript for the favorite person's name.
+    - On a text match, fire a DIFFERENT notification so the user knows
+      it's a lower-confidence heads-up, not a confirmed sighting:
+         "Someone just mentioned his name" (audio, heads-up only)
+    - Costs more compute (STT isn't free) - flag this in the UI, and
+      include it in the shared-job dedup later (section 6) so many
+      users watching the same stream still only run STT once.
+
+
+------------------------------------------------------------------------
+4. TOOLS TO LEARN
+------------------------------------------------------------------------
+  Python                 - backend + ML glue, main language throughout
+  yt-dlp                 - extract real stream URL from a YouTube link
+  ffmpeg                 - pull video frames AND audio from a live
+                            stream
+  OpenCV                 - basic image handling
+  face_recognition (dlib)
+    or DeepFace           - beginner-friendly face-matching, no need
+                            to build/train your own model
+  Speech-to-text          - hosted streaming API (Google Speech-to-Text
+                            streaming / AssemblyAI / Deepgram - easier
+                            for a beginner) OR self-hosted Whisper
+                            (free, harder to run in real time)
+  Sports data API          - per-sport research needed when Track A
+                            is built (cricket first, most likely)
+  FastAPI                 - Python web backend, pairs naturally with
+                            the ML code
+  SQLite -> PostgreSQL     - start simple, move to Postgres once
+                            multi-user
+  Firebase Cloud Messaging - push notifications to a phone browser
+  PWA basics (manifest.json
+    + service worker)      - "installable" web app on a phone without
+                            building a native app yet
+  Firebase Auth             - simplest way to add user accounts later
+  Twilio Voice API          - later, for actually calling the user
+  A small always-on server/VM
+    (not serverless)        - ffmpeg/watch jobs run continuously for
+                            the length of an event; serverless
+                            functions time out too fast for this
+
+
+------------------------------------------------------------------------
+5. IMPLEMENTATION PHASES
+------------------------------------------------------------------------
+
+PHASE 0 - Track A prototype (fastest win, build this FIRST)
+  - Pick one sport (likely cricket) and research/pick a live
+    scoreboard API.
+  - Script: poll the API every ~20-60s for a given match, check if
+    the favorite player is the current batsman/bowler, print an alert
+    on match.
+  - No video, no ML - proves the concept fast and cheaply.
+
+PHASE 1 - Track B core prototype (local video file, no live stream yet)
+  - Script: given a reference photo + a local video FILE, detect
+    timestamps where that face appears.
+  - This is the riskiest technical assumption in the whole project -
+    test accuracy honestly here before building anything on top of it.
+
+PHASE 2 - Track B on a real live stream
+  - Use yt-dlp to get the stream URL from a real YouTube Live link.
+  - Use ffmpeg to sample frames from the live stream, feed into the
+    Phase 1 matching code.
+  - Still console-only, no app yet.
+
+PHASE 3 - Track B audio add-on (optional name-mention toggle)
+  - Pull audio from the same ffmpeg ingestion.
+  - Run speech-to-text on a rolling window, text-search for the
+    favorite person's name.
+  - Wire up as an optional flag alongside Phase 2's video matching.
+
+PHASE 4 - Turn into a personal notifying service (single user, both
+           tracks)
+  - FastAPI backend: start a "watch job" (job type = sports/video,
+    input = link or match id + photo/name, optional name-mention
+    toggle, optional time limit).
+  - Background worker runs the job; on match, sends a push
+    notification via Firebase Cloud Messaging.
+  - Minimal mobile-friendly web page (PWA): choose event type, upload
+    photo / pick match, set timer, Start button, registers for push
+    notifications.
+  - Test end-to-end on your own phone. <- MVP achieved here.
+
+PHASE 5 - Multi-user accounts
+  - Add Firebase Auth so multiple people can have accounts, their own
+    favorite-person profiles, and their own job history.
+  - Move from SQLite to PostgreSQL.
+
+PHASE 6 - Shared-job de-duplication (needed before going public)
+  - If multiple users are watching the SAME stream/match (even for
+    different favorite people), run ONE shared ingestion/processing
+    job for that stream and fan out matching + notifications to every
+    subscribed user, instead of one job per user.
+  - This applies to Track A naturally (one scoreboard poll already
+    serves everyone) and must be added explicitly for Track B
+    (video/audio processing is the expensive part).
+  - Add limits: max watch duration, max concurrent jobs per user, to
+    control cost.
+
+PHASE 7 - Hardening & public launch
+  - Move continuous workers to a proper worker pool on a VM/container
+    host that can run many concurrent jobs.
+  - Monitor compute cost per active stream.
+  - Re-confirm legal comfort level per source (which channels/streams
+    you're comfortable processing) before opening to the public.
+
+PHASE 8 - Calling instead of just notifying (final add-on)
+  - Integrate Twilio Voice so a confirmed match can trigger an actual
+    phone call to the user, in addition to/instead of a push
+    notification.
+
+
+------------------------------------------------------------------------
+6. OPEN QUESTIONS / DECISIONS FOR LATER (don't assume, revisit when
+   we get there)
+------------------------------------------------------------------------
+  - Which sports API to use for Track A (per sport, needs comparison
+    of free/paid tiers and reliability when we start Phase 0).
+  - Which speech-to-text provider to use for the Track B audio add-on
+    (hosted API vs self-hosted Whisper) - decide at Phase 3.
+  - Exact legal/comfort boundaries for which YouTube channels/streams
+    are OK to process automatically - revisit before Phase 7 (public
+    launch).
