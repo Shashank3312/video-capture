@@ -22,3 +22,4 @@ Thumbs.db
 # Secrets / local config
 *.local
 .env.*
+!.env.example
