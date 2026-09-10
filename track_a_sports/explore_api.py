@@ -1,10 +1,19 @@
 """
-Phase 0, step A: look at what CricketData.org's API actually returns.
+Phase 0, step A: look at what the Cricbuzz Cricket API (via RapidAPI)
+actually returns.
 
-We don't yet know the exact field names for "who is currently batting/
-bowling" - rather than guess, this script fetches real live data and
-prints it so we can read the real shape once, then write the matching
-script (watch.py) against real field names instead of assumed ones.
+CricketData.org (our first pick) turned out not to expose current
+batsman/bowler at all on its free tier. pycricbuzz (a free, no-key
+wrapper around Cricbuzz's own app backend) turned out to be dead -
+its backend host no longer resolves. This is the third and current
+candidate: an actively maintained, RapidAPI-hosted mirror of Cricbuzz
+data.
+
+We still don't know its exact field names for "who's currently
+batting/bowling" or for playing-XI/squads, so - same approach as
+before - this script fetches real live data and prints it raw so we
+read the real shape once, before writing the matching script
+(watch.py) against real field names instead of assumed ones.
 
 Usage:
     python explore_api.py
@@ -20,13 +29,17 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-API_KEY = os.environ.get("CRICAPI_KEY")
-BASE_URL = "https://api.cricapi.com/v1"
+API_KEY = os.environ.get("RAPIDAPI_KEY")
+API_HOST = "cricbuzz-cricket.p.rapidapi.com"
+BASE_URL = f"https://{API_HOST}"
+HEADERS = {
+    "X-RapidAPI-Key": API_KEY or "",
+    "X-RapidAPI-Host": API_HOST,
+}
 
 
-def get(endpoint: str, **params):
-    params["apikey"] = API_KEY
-    response = requests.get(f"{BASE_URL}/{endpoint}", params=params, timeout=15)
+def get(path: str):
+    response = requests.get(f"{BASE_URL}{path}", headers=HEADERS, timeout=15)
     response.raise_for_status()
     return response.json()
 
@@ -34,29 +47,45 @@ def get(endpoint: str, **params):
 def main():
     if not API_KEY:
         print(
-            "Missing CRICAPI_KEY. Copy .env.example to .env (in the project "
-            "root) and paste your free key from https://cricketdata.org/ "
-            "into it, then run this again."
+            "Missing RAPIDAPI_KEY. Copy .env.example to .env (in the "
+            "project root) and paste your RapidAPI key into it, then run "
+            "this again."
         )
         sys.exit(1)
 
-    print("Fetching currentMatches...\n")
-    current = get("currentMatches", offset=0)
-    print(json.dumps(current, indent=2)[:3000])
+    print("Fetching /matches/v1/live ...\n")
+    live = get("/matches/v1/live")
+    print(json.dumps(live, indent=2)[:4000])
 
-    matches = current.get("data", [])
-    live_match = next((m for m in matches if m.get("matchStarted") and not m.get("matchEnded")), None)
+    # The response nests matches under typeMatches -> seriesMatches ->
+    # seriesAdWrapper -> matches. Walk it defensively since we haven't
+    # confirmed this shape from docs - only from this live call.
+    match_id = None
+    match_desc = None
+    for type_match in live.get("typeMatches", []):
+        for series_match in type_match.get("seriesMatches", []):
+            wrapper = series_match.get("seriesAdWrapper", {})
+            for m in wrapper.get("matches", []):
+                info = m.get("matchInfo", {})
+                if info.get("state") in ("In Progress", "Live"):
+                    match_id = info.get("matchId")
+                    match_desc = info.get("matchDesc")
+                    break
+            if match_id:
+                break
+        if match_id:
+            break
 
-    if not live_match:
-        print("\nNo live match found right now (matchStarted=True, matchEnded=False).")
-        print("Try again while a real match is in progress.")
+    if not match_id:
+        print("\nCouldn't find a clearly in-progress match in that response.")
+        print("Full response was printed above (possibly truncated) -")
+        print("inspect it manually to find a matchId to test with.")
         return
 
-    match_id = live_match["id"]
-    print(f"\nFound a live match: {live_match.get('name')} (id={match_id})")
-    print("\nFetching match_info for that match...\n")
-    info = get("match_info", id=match_id)
-    print(json.dumps(info, indent=2)[:5000])
+    print(f"\nFound a live match: {match_desc} (id={match_id})")
+    print(f"\nFetching /mcenter/v1/{match_id}/scard ...\n")
+    scorecard = get(f"/mcenter/v1/{match_id}/scard")
+    print(json.dumps(scorecard, indent=2)[:6000])
 
 
 if __name__ == "__main__":
