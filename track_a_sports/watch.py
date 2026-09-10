@@ -56,6 +56,43 @@ def fetch_scorecard(match_id: int) -> dict | None:
         return None
 
 
+def fetch_playing_xi(match_id: int) -> dict[str, list[str]] | None:
+    """
+    Playing-XI names for both teams, keyed by team name, e.g.
+    {"England": [...11 names...], "Pakistan": [...11 names...]}.
+
+    Two extra calls (match overview for team IDs, then one squad call
+    per team), made once at startup - not worth doing on every poll.
+    Returns None if any of these calls fail, so the caller can decide
+    whether to skip validation rather than crash.
+    """
+    try:
+        overview = requests.get(f"https://{API_HOST}/mcenter/v1/{match_id}", headers=HEADERS, timeout=15)
+        overview.raise_for_status()
+        overview_data = overview.json()
+
+        squads: dict[str, list[str]] = {}
+        for team_key in ("team1", "team2"):
+            team = overview_data.get(team_key, {})
+            team_id = team.get("teamid")
+            team_name = team.get("teamname", team_key)
+            if team_id is None:
+                continue
+
+            squad_resp = requests.get(
+                f"https://{API_HOST}/mcenter/v1/{match_id}/team/{team_id}", headers=HEADERS, timeout=15
+            )
+            squad_resp.raise_for_status()
+            groups = squad_resp.json().get("player", [])
+            playing_xi = next((g for g in groups if g.get("category") == "playing XI"), {})
+            squads[team_name] = [p["name"] for p in playing_xi.get("player", [])]
+
+        return squads
+    except requests.RequestException as exc:
+        print(f"[warn] couldn't fetch playing XI, skipping the not-in-match check: {exc}")
+        return None
+
+
 def current_innings(scorecard: dict) -> dict | None:
     """
     The innings that is genuinely still in progress.
@@ -185,6 +222,16 @@ def main():
             "this again."
         )
         sys.exit(1)
+
+    squads = fetch_playing_xi(args.match_id)
+    if squads is not None:
+        target = args.player_name.strip().lower()
+        all_names = [name for names in squads.values() for name in names]
+        if not any(target in name.lower() for name in all_names):
+            team_list = ", ".join(squads.keys()) or "either team"
+            print(f"'{args.player_name}' is not in the playing XI for {team_list} in this match.")
+            print("Double-check the spelling, or that this is the right match_id.")
+            sys.exit(1)
 
     try:
         watch(args.match_id, args.player_name, args.interval)
