@@ -17,7 +17,10 @@ real live responses (see explore_api.py), not from official docs:
 Debounce approach: alert once on the *transition* into
 batting/bowling (edge-detection against the previous poll's state),
 not on every poll while they're still out there. This is what keeps
-a multi-hour match from spamming duplicate notifications.
+a multi-hour match from spamming duplicate notifications. Once a
+matching alert fires (batting or bowling), the script prints "Task
+completed." and exits - the point is a one-shot notification, not a
+running log.
 
 Usage:
     python watch.py <match_id> "<player name>" [--interval SECONDS]
@@ -54,8 +57,27 @@ def fetch_scorecard(match_id: int) -> dict | None:
 
 
 def current_innings(scorecard: dict) -> dict | None:
-    """The innings that still has at least one not-out batsman."""
-    for innings in scorecard.get("scorecard", []):
+    """
+    The innings that is genuinely still in progress.
+
+    Naively "the innings with a not-out batsman" is NOT enough: when
+    the last wicket falls (all out) or an innings is declared, the
+    batsman who was not out at that moment stays permanently marked
+    "outdec": "batting" in this API's data - they really were never
+    dismissed, but the innings itself is over. Confirmed on a real
+    match: an England innings finished at wickets=10 (all out) still
+    showed a stranded not-out batsman as "batting".
+
+    So an innings only counts as live if it's neither declared nor
+    all out (wickets < 10), on top of having a not-out batsman. We
+    also scan from the most recent innings backwards, since a finished
+    earlier innings can still pass that check.
+    """
+    for innings in reversed(scorecard.get("scorecard", [])):
+        if innings.get("isdeclared"):
+            continue
+        if innings.get("wickets", 0) >= 10:
+            continue
         if any(b.get("outdec") == "batting" for b in innings.get("batsman", [])):
             return innings
     return None
@@ -71,26 +93,42 @@ def current_batsmen(innings: dict) -> set[str]:
 
 def current_bowler(innings: dict, previous_bowler_balls: dict[str, int] | None) -> tuple[str | None, dict[str, int]]:
     """
-    Infer the current bowler: whoever's ball count went up since the
-    last poll. Returns (name_or_None, updated_balls_snapshot).
+    Infer the current bowler. Returns (name_or_None, updated_balls_snapshot).
 
-    On the first call (previous_bowler_balls is None) every bowler's
-    ball count would look "increased" from a blank baseline, which
-    would misidentify whoever happens to be first in the list - so
-    the first call only seeds the baseline and reports no bowler yet.
+    On the first call (previous_bowler_balls is None) there's no delta
+    baseline yet - but unlike a mid-innings poll, we can still spot
+    someone who is *already* mid-over right now: their "overs" value
+    (e.g. "22.3") has a fractional part, while anyone not currently
+    bowling shows a whole number. This mirrors current_batsmen(),
+    which also alerts immediately if the target is already batting
+    when watching starts - bowling should behave the same way instead
+    of always requiring a second poll first.
+
+    On later calls, pick whichever bowler's ball count increased the
+    MOST since the last poll, not just the first one found to have
+    increased at all. If a poll happens to span more than one
+    delivery (API lag/caching, or a slow poll interval), more than one
+    bowler's figures can tick up in the same window - e.g. the tail
+    end of one over plus the start of the next - and picking by
+    largest delta is far more likely to land on whoever is actually
+    bowling right now than picking by list order.
     """
-    snapshot = {b["name"]: b.get("balls", 0) for b in innings.get("bowler", [])}
+    bowlers = innings.get("bowler", [])
+    snapshot = {b["name"]: b.get("balls", 0) for b in bowlers}
 
     if previous_bowler_balls is None:
-        return None, snapshot
+        mid_over = [b["name"] for b in bowlers if "." in str(b.get("overs", ""))]
+        return (mid_over[0] if mid_over else None), snapshot
 
-    bowling_now = None
+    best_name = None
+    best_delta = 0
     for name, balls in snapshot.items():
-        if balls > previous_bowler_balls.get(name, -1):
-            bowling_now = name
-            break
+        delta = balls - previous_bowler_balls.get(name, 0)
+        if delta > best_delta:
+            best_delta = delta
+            best_name = name
 
-    return bowling_now, snapshot
+    return best_name, snapshot
 
 
 def watch(match_id: int, player_name: str, interval: int):
@@ -118,11 +156,15 @@ def watch(match_id: int, player_name: str, interval: int):
         for name in newly_batting:
             if player_name in name.lower():
                 print(f"ALERT: {name} has come in to bat!")
+                print("Task completed.")
+                return
 
         bowler_name, previous_bowler_balls = current_bowler(innings, previous_bowler_balls)
         if bowler_name and bowler_name != previous_bowler:
             if player_name in bowler_name.lower():
                 print(f"ALERT: {bowler_name} has come on to bowl!")
+                print("Task completed.")
+                return
             previous_bowler = bowler_name
 
         previously_batting = batting_now
