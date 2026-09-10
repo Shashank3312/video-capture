@@ -261,6 +261,15 @@ PHASE 8 - Calling instead of just notifying (final add-on)
     sources in section 2 applies here - revisit before Phase 7.
   - Other sports (beyond cricket) still need their own API research
     when we get to them - this decision only covers cricket.
+  - PAUSED: Kabaddi (Pro Kabaddi League) - researched and blocked on
+    cost, not feasibility. Roanuz's Kabaddi API has exactly the field
+    structure we'd want (a "starters" vs "bench" array per team,
+    matching "notify only if on court, not on bench") but is
+    $570/month with no free tier. EntitySport offers a free trial
+    only, then $1,200/year. Unlike cricket, no free/unofficial mirror
+    API was found for Kabaddi. Revisit only if a free source turns up
+    or the project's budget changes - don't re-research from scratch,
+    these two are the real options found so far.
   - Which speech-to-text provider to use for the Track B audio add-on
     (hosted API vs self-hosted Whisper) - decide at Phase 3.
   - Exact legal/comfort boundaries for which YouTube channels/streams
