@@ -23,3 +23,7 @@ Thumbs.db
 *.local
 .env.*
 !.env.example
+
+# Personal photos/videos used to test face matching - this repo is
+# public, never commit real people's images or footage.
+track_b_video/test_data/
