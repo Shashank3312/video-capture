@@ -132,30 +132,57 @@ TRACK B - GENERAL STREAM WATCHER (video face-matching)
 ------------------------------------------------------------------------
 
 PHASE 0 - Track A prototype (fastest win, build this FIRST)
+  - Set up the dev environment before writing the poller: Python venv,
+    get API keys, store secrets in a `.env` file that's gitignored -
+    never commit keys or reference photos.
   - Pick one sport (likely cricket) and research/pick a live
     scoreboard API.
   - Script: poll the API every ~20-60s for a given match, check if
     the favorite player is the current batsman/bowler, print an alert
     on match.
+  - Cooldown/debounce: suppress repeat alerts while the same player is
+    still batting/bowling - alert once per appearance, not once per
+    poll. Needed now so early testing isn't mistaken for a bug.
   - No video, no ML - proves the concept fast and cheaply.
+  - Done when: alert fires once per real appearance across at least
+    one full test match, with no duplicate spam.
 
 PHASE 1 - Track B core prototype (local video file, no live stream yet)
   - Script: given a reference photo + a local video FILE, detect
     timestamps where that face appears.
-  - This is the riskiest technical assumption in the whole project -
-    test accuracy honestly here before building anything on top of it.
+  - Use 2-3 varied reference photos per person (different
+    angle/lighting), not one - this is the riskiest technical
+    assumption in the whole project, so bad input photos would poison
+    the validation.
+  - Privacy note: reference photos and any derived face data are
+    stored only for the life of the job and deleted when it ends -
+    revisited more fully at Phase 7 before any public launch.
+  - Test accuracy honestly here before building anything on top of it.
+  - Done when: correctly flags presence at the right timestamps on at
+    least 2 manually-checked test videos, with an honest accuracy note
+    (false positive/negative rate observed).
 
 PHASE 2 - Track B on a real live stream
   - Use yt-dlp to get the stream URL from a real YouTube Live link.
   - Use ffmpeg to sample frames from the live stream, feed into the
     Phase 1 matching code.
+  - Same cooldown/debounce rule as Phase 0, adapted to video frames:
+    suppress repeat alerts while the face keeps matching across
+    consecutive sampled frames.
+  - Basic error handling: invalid/unplayable link, stream goes offline
+    mid-watch - fail loudly to the console rather than hanging or
+    crashing silently.
   - Still console-only, no app yet.
+  - Done when: runs against a real live stream for its full duration
+    without crashing, with at most one alert per appearance.
 
 PHASE 3 - Track B audio add-on (optional name-mention toggle)
   - Pull audio from the same ffmpeg ingestion.
   - Run speech-to-text on a rolling window, text-search for the
     favorite person's name.
   - Wire up as an optional flag alongside Phase 2's video matching.
+  - Done when: correctly flags at least one real name-mention in a
+    recorded test clip without excessive false positives.
 
 PHASE 4 - Turn into a personal notifying service (single user, both
            tracks)
@@ -164,10 +191,24 @@ PHASE 4 - Turn into a personal notifying service (single user, both
     toggle, optional time limit).
   - Background worker runs the job; on match, sends a push
     notification via Firebase Cloud Messaging.
+  - Notification content: include the event name/timestamp and a
+    tap-through link back to the live stream or scoreboard - this is
+    the actual point of the app, so it can't just be a bare alert.
+  - Job end-states: a job resolves as matched / failed (bad link, API
+    down, stream ended unexpectedly) / expired-no-match (timer ran
+    out, person never appeared) - surface the outcome to the user,
+    don't just go silent.
+  - Testing infra: push notifications need HTTPS to reach a real
+    phone, so testing needs a free tunnel (e.g. ngrok/Cloudflare
+    Tunnel) or an early cheap deploy - plain localhost won't work for
+    this test.
   - Minimal mobile-friendly web page (PWA): choose event type, upload
     photo / pick match, set timer, Start button, registers for push
     notifications.
   - Test end-to-end on your own phone. <- MVP achieved here.
+  - Done when: you receive a real push notification on your own
+    phone, tap it, and land on the live event, for both an A-track and
+    a B-track job.
 
 PHASE 5 - Multi-user accounts
   - Add Firebase Auth so multiple people can have accounts, their own
@@ -190,7 +231,9 @@ PHASE 7 - Hardening & public launch
     host that can run many concurrent jobs.
   - Monitor compute cost per active stream.
   - Re-confirm legal comfort level per source (which channels/streams
-    you're comfortable processing) before opening to the public.
+    you're comfortable processing) before opening to the public, and
+    settle a data retention policy for stored reference photos/faces
+    at the same time.
 
 PHASE 8 - Calling instead of just notifying (final add-on)
   - Integrate Twilio Voice so a confirmed match can trigger an actual
