@@ -231,9 +231,11 @@ PHASE 7 - Hardening & public launch
     host that can run many concurrent jobs.
   - Monitor compute cost per active stream.
   - Re-confirm legal comfort level per source (which channels/streams
-    you're comfortable processing) before opening to the public, and
-    settle a data retention policy for stored reference photos/faces
-    at the same time.
+    you're comfortable processing, and the Cricbuzz-via-RapidAPI data
+    source from Phase 0, which is an unofficial mirror, not a
+    documented public API) before opening to the public, and settle a
+    data retention policy for stored reference photos/faces at the
+    same time.
 
 PHASE 8 - Calling instead of just notifying (final add-on)
   - Integrate Twilio Voice so a confirmed match can trigger an actual
@@ -245,8 +247,20 @@ PHASE 8 - Calling instead of just notifying (final add-on)
 6. OPEN QUESTIONS / DECISIONS FOR LATER (don't assume, revisit when
    we get there)
 ------------------------------------------------------------------------
-  - Which sports API to use for Track A (per sport, needs comparison
-    of free/paid tiers and reliability when we start Phase 0).
+  - RESOLVED at Phase 0: sports API for cricket is the Cricbuzz Cricket
+    API via RapidAPI (vendor: cricketapilive), not CricketData.org.
+    CricketData.org's free tier turned out not to expose current
+    batsman/bowler at all (only team-level score + free-text status).
+    pycricbuzz (a free, no-key wrapper around Cricbuzz's own app
+    backend) turned out to be dead - its backend host no longer
+    resolves. Confirmed against real data: a not-out batsman is
+    marked "outdec": "batting" in the /mcenter/v1/{id}/scard endpoint;
+    there's no equivalent explicit flag for the current bowler, so
+    track_a_sports/watch.py infers it from whose ball count increases
+    between polls. Same unofficial-data-source caveat as the video
+    sources in section 2 applies here - revisit before Phase 7.
+  - Other sports (beyond cricket) still need their own API research
+    when we get to them - this decision only covers cricket.
   - Which speech-to-text provider to use for the Track B audio add-on
     (hosted API vs self-hosted Whisper) - decide at Phase 3.
   - Exact legal/comfort boundaries for which YouTube channels/streams
