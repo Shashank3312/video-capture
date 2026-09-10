@@ -40,6 +40,25 @@ face recognition. Do not skip ahead to multi-user/scaling work
 (Phases 5+) before the single-user MVP (Phases 0-4) is working and
 validated — this was a deliberate decision, not an oversight.
 
+## Git workflow
+
+This repo is scoped to just this project (`Shashank3312/video-capture`
+on GitHub, remote `origin`) — independent of any outer/home-directory
+git repo, which should never be touched from here.
+
+Commit and push regularly as work happens, not just at the end of a
+session, so nothing is ever lost and any point can be reverted to:
+- After finishing a meaningful chunk of work (a phase from the plan, a
+  working script, a fix, a notable file added) — not after every tiny
+  edit, but don't let uncommitted work pile up either.
+- Write clean, specific commit messages that explain *why*, not just
+  *what* (e.g. "Add cricket scoreboard polling for Track A" rather
+  than "update files").
+- Push to `origin` right after committing, so GitHub always reflects
+  local state.
+- Never force-push, reset --hard, or rewrite history without asking
+  first — the whole point of this workflow is to never lose work.
+
 ## Open decisions
 
 `implementation_plan.txt` section 6 lists decisions intentionally left
