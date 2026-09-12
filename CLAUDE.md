@@ -99,6 +99,66 @@ been running scripts against real live matches and checking the
 output by hand; add real tests when this gets wrapped into the
 service in Phase 4.
 
+## Track B: general stream watcher (`track_b_video/`)
+
+Phase 1 only so far (`implementation_plan.txt` section 5): local video
+file, no live stream ingestion yet. `watch_local_video.py` takes
+reference photo(s) of a person and a local video file, and prints
+timestamps where that face appears.
+
+Approach, and why:
+- Uses **DeepFace** (`DeepFace.represent()`) to get one face embedding
+  per reference photo, then compares every sampled frame's face
+  embedding against all reference embeddings with
+  `deepface.modules.verification.find_distance()` /
+  `find_threshold()` - DeepFace's own pre-tuned per-model thresholds,
+  not a guessed similarity cutoff.
+- Samples the video at a fixed interval (default 1s), not every frame
+  - most of a video is redundant for this purpose.
+- Consecutive matching samples are grouped into "appearance" segments
+  in the summary, mirroring Track A's debounce idea: report continuous
+  appearances, not one alert per sampled hit.
+- Default detector backend is `retinaface`, not DeepFace's own default
+  `opencv` - the installed `opencv-python` 5.0.0.93 wheel is missing
+  the Haar-cascade data file `opencv` needs, a real gap in that wheel,
+  not a config mistake.
+- Multiple varied reference photos (different angle/lighting) are
+  expected, per Phase 1's plan - a photo with no detectable face is
+  skipped with a warning, not fatal unless none are usable.
+
+Test assets (`track_b_video/test_data/`: reference photos and test
+videos) are gitignored and must never be committed - this repo is
+public and these are real people's images/footage. Same legal/privacy
+caveat as Track A's data source applies here too (see
+`implementation_plan.txt` section 6/Phase 7): revisit before any
+public launch.
+
+### Running it
+
+```
+.venv\Scripts\python.exe -m pip install -r track_b_video\requirements.txt
+```
+
+Set `PYTHONUTF8=1` in the shell before running anything DeepFace-related
+- its logger prints emoji, which crashes with `UnicodeEncodeError` on
+Windows' default console encoding otherwise (a real bug hit during
+setup, not a hypothetical).
+
+(also needs `opencv-python`, `numpy` etc. pulled in transitively by
+`deepface`/`tf-keras` - see the venv used by Track A first if starting
+fresh.)
+
+Drop reference photos into `track_b_video/test_data/reference_photos/`
+and a test clip into `track_b_video/test_data/videos/`, then:
+
+```
+.venv\Scripts\python.exe track_b_video\watch_local_video.py <video_path> --interval 1.0
+```
+
+No test suite yet - Phase 1's own "done" bar (see
+`implementation_plan.txt`) is honest accuracy checking against
+manually-verified timestamps on real test videos, not automated tests.
+
 ## Git workflow
 
 This repo is scoped to just this project (`Shashank3312/video-capture`
