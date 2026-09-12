@@ -31,15 +31,27 @@ Usage:
         [--photos-dir DIR] [--model MODEL_NAME] [--detector BACKEND]
 
 Defaults point at test_data/reference_photos, use DeepFace's default
-VGG-Face model, and RetinaFace as the detector (DeepFace's own default
-"opencv" backend needs a Haar-cascade file that's missing from the
-installed opencv-python 5.0.0.93 build's data/ folder - a real gap in
-that specific wheel, not a config mistake). See .gitignore - these
-test assets are never committed since this repo is public.
+VGG-Face model, and MTCNN as the detector. This is CPU-only - no GPU
+acceleration is possible on this machine: TensorFlow dropped native
+Windows GPU support from 2.11 onwards (would need WSL2). Per-frame
+cost measured in-process (see the per-sample timing this script
+prints) has ranged 1.5-3.5s with MTCNN across different runs on this
+machine, vs. 8-12s with RetinaFace (DeepFace's most accurate but
+slowest detector) - real variance seems to come from system load
+between runs more than anything in the code, so treat these as rough
+ranges, not precise multipliers. DeepFace's own "opencv" backend is
+NOT usable here at all - this installed opencv-python 5.0.0.93 build
+is missing the whole cv2.CascadeClassifier class it needs (confirmed
+by testing, not just a missing data file - don't waste time
+re-attempting an XML-file fix). The one lever fully within your
+control if this is too slow: raise --interval to sample less often
+(cost scales linearly with sample count). See .gitignore - test
+assets are never committed, this repo is public.
 """
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -123,6 +135,7 @@ def scan_video(
 
         if frame_idx % frame_step == 0:
             timestamp = frame_idx / fps
+            _t0 = time.time()
             try:
                 faces = DeepFace.represent(
                     img_path=frame,
@@ -131,18 +144,19 @@ def scan_video(
                     enforce_detection=False,
                 )
             except Exception as exc:  # a bad frame shouldn't kill the whole scan
-                print(f"[{format_timestamp(timestamp)}] [warn] frame processing failed: {exc}")
+                print(f"[{format_timestamp(timestamp)}] [warn] frame processing failed: {exc} ({time.time() - _t0:.2f}s)")
                 frame_idx += 1
                 continue
 
+            elapsed = time.time() - _t0
             if faces and faces[0].get("face_confidence", 1) > 0:
                 distance = best_distance(faces[0]["embedding"], reference_embeddings)
                 is_match = distance <= threshold
-                print(f"[{format_timestamp(timestamp)}] {'MATCH' if is_match else 'no match'} (distance={distance:.3f}, threshold={threshold:.3f})")
+                print(f"[{format_timestamp(timestamp)}] {'MATCH' if is_match else 'no match'} (distance={distance:.3f}, threshold={threshold:.3f}) [{elapsed:.2f}s]")
                 if is_match:
                     matches.append((timestamp, distance))
             else:
-                print(f"[{format_timestamp(timestamp)}] no face detected")
+                print(f"[{format_timestamp(timestamp)}] no face detected [{elapsed:.2f}s]")
 
         frame_idx += 1
 
@@ -180,7 +194,7 @@ def main():
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between sampled frames (default 1.0)")
     parser.add_argument("--photos-dir", type=Path, default=DEFAULT_PHOTOS_DIR)
     parser.add_argument("--model", default="VGG-Face")
-    parser.add_argument("--detector", default="retinaface")
+    parser.add_argument("--detector", default="mtcnn")
     args = parser.parse_args()
 
     if not args.video_path.exists():
