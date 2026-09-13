@@ -120,7 +120,11 @@ class LiveFrameReader:
         self._thread.join(timeout=2.0)
 
 
-def resolve_stream_url(youtube_url: str) -> tuple[str, str]:
+def resolve_stream_url(
+    youtube_url: str,
+    browser: str | None = None,
+    cookie_file: Path | None = None,
+) -> tuple[str, str]:
     """Resolve a YouTube link to a directly playable stream URL."""
     try:
         import yt_dlp
@@ -136,12 +140,34 @@ def resolve_stream_url(youtube_url: str) -> tuple[str, str]:
         "no_warnings": True,
         "format": "best[height<=720]/best",
     }
+    # YouTube gates a lot of streams behind an anti-bot check that only
+    # a signed-in session gets past, so yt-dlp has to borrow cookies
+    # from a browser or a cookies.txt export. Nothing is sent anywhere
+    # except to YouTube, and nothing is stored by this script.
+    if browser:
+        options["cookiesfrombrowser"] = (browser,)
+    if cookie_file:
+        options["cookiefile"] = str(cookie_file)
+
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
     except Exception as exc:
-        print(f"Couldn't read that link: {exc}")
-        print("Check the URL is a real, public, currently-live YouTube stream.")
+        message = str(exc)
+        print(f"Couldn't read that link: {message}")
+        if "not a bot" in message or "Sign in to confirm" in message:
+            print(
+                "\nYouTube is asking this request to prove it's not a bot, which "
+                "only a signed-in session can do. Re-run with the browser you're "
+                "signed into YouTube on, e.g.:\n"
+                "    --browser firefox        (or chrome / edge / brave)\n"
+                "If that fails on Chrome or Edge, those encrypt their cookie store "
+                "on Windows in a way yt-dlp often can't read - export a cookies.txt "
+                "with a 'Get cookies.txt' browser extension and pass --cookies "
+                "path\\to\\cookies.txt instead."
+            )
+        else:
+            print("Check the URL is a real, public, currently-live YouTube stream.")
         sys.exit(1)
 
     if not info.get("is_live"):
@@ -163,8 +189,10 @@ def watch(
     detector_backend: str,
     min_face_area: float,
     max_minutes: float | None,
+    browser: str | None = None,
+    cookie_file: Path | None = None,
 ):
-    stream_url, title = resolve_stream_url(youtube_url)
+    stream_url, title = resolve_stream_url(youtube_url, browser, cookie_file)
     print(f"Watching: {title}\n")
 
     try:
@@ -253,6 +281,18 @@ def main():
         default=None,
         help="stop after this many minutes (default: watch until the stream ends)",
     )
+    parser.add_argument(
+        "--browser",
+        default=None,
+        help="browser to borrow YouTube cookies from (chrome, firefox, edge, brave) "
+        "- needed when YouTube demands a signed-in session",
+    )
+    parser.add_argument(
+        "--cookies",
+        type=Path,
+        default=None,
+        help="path to a cookies.txt export, as an alternative to --browser",
+    )
     args = parser.parse_args()
 
     reference_embeddings = load_reference_embeddings(args.photos_dir, args.model, args.detector)
@@ -263,6 +303,8 @@ def main():
         args.detector,
         args.min_face_area,
         args.max_minutes,
+        args.browser,
+        args.cookies,
     )
 
 
