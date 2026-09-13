@@ -335,7 +335,7 @@ def watch(
         else:
             also = "" if audio_only else "Also "
             how_often = {
-                "once": "alerting once, then staying quiet",
+                "once": "alerting once, then stopping",
                 "cooldown": f"alerting at most once every {cooldown_minutes:g} min",
                 "every": "alerting on every mention",
             }[alert_mode]
@@ -364,6 +364,7 @@ def watch(
     last_name_alert_at = None
     windows_reported = 0
     last_frame_id = -1
+    done = False
 
     try:
         while True:
@@ -380,8 +381,6 @@ def watch(
             if listener:
                 for mention in listener.drain():
                     now = time.time()
-                    if alert_mode == "once" and name_alerts:
-                        continue
                     if alert_mode == "cooldown" and last_name_alert_at is not None:
                         if now - last_name_alert_at < cooldown_minutes * 60:
                             continue
@@ -390,7 +389,14 @@ def watch(
                     how = "" if mention.score >= 1.0 else f" (heard as {mention.matched!r})"
                     print(f"\n*** HEARD IT{how}: \"{mention.text}\" ***\n")
                     if alert_mode == "once":
-                        print(f"(alert-mode 'once': staying quiet about {listen_for!r} from here on)\n")
+                        # Told you once, so the job is done - same as
+                        # Track A's watcher, which exits on its alert
+                        # rather than carrying on.
+                        print("Task completed.")
+                        done = True
+                        break
+                if done:
+                    break
 
                 # Say something as each window is transcribed. Silence
                 # for minutes on end is indistinguishable from a hang,
@@ -452,6 +458,9 @@ def watch(
                     appearance_started_at = time.time()
                     alerts += 1
                     print(f"\n*** ALERT: they're on screen now - {clock} ***\n")
+                    if alert_mode == "once":
+                        print("Task completed.")
+                        break
             elif appearing:
                 misses += 1
                 if misses >= MISSES_TO_END_APPEARANCE:
@@ -529,9 +538,9 @@ def main():
         "--alert-mode",
         default="cooldown",
         choices=["once", "cooldown", "every"],
-        help="how often to alert for what's heard: 'once' tells you the first time and then "
-        "stays quiet, 'cooldown' (default) waits --cooldown-minutes between alerts, "
-        "'every' reports every single mention",
+        help="what to do when there's a hit: 'once' alerts and then exits (the job is done, "
+        "same as Track A), 'cooldown' (default) waits --cooldown-minutes before it can alert "
+        "again, 'every' reports every single hit",
     )
     parser.add_argument(
         "--cooldown-minutes",

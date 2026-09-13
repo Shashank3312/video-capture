@@ -81,16 +81,25 @@ def find_mention(
     if not target:
         return None
 
-    haystack = normalize(text)
-    if target in haystack:
-        return name, 1.0
-
-    # Whisper splits or joins names unpredictably, so compare the name
-    # against every run of words of roughly its own length rather than
-    # word by word.
     words = _words(text)
+    if not words:
+        return None
+
+    # Compare against runs of WHOLE words, never a free substring of
+    # the whole text. Normalising strips spaces, so a plain substring
+    # search let a short name match inside an unrelated word: "NTR"
+    # hit "country" and "entry", and "to" hit "tomorrow". Whisper
+    # still splits and joins names unpredictably, which is why runs of
+    # several words are joined back up and compared as one.
     name_word_count = max(1, len(name.split()))
-    for span in range(max(1, name_word_count - 1), name_word_count + 2):
+    max_span = name_word_count + 1
+
+    for span in range(1, max_span + 1):
+        for i in range(len(words) - span + 1):
+            if "".join(words[i : i + span]) == target:
+                return name, 1.0
+
+    for span in range(max(1, name_word_count - 1), max_span + 1):
         for i in range(len(words) - span + 1):
             candidate = "".join(words[i : i + span])
             if not candidate:
