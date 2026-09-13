@@ -12,3 +12,8 @@ opencv-python==4.14.0.94
 
 # Optional in DeepFace, required for the yolo* detector backends.
 ultralytics==8.4.150
+
+# Phase 2: resolves a YouTube Live link to a playable stream URL. No
+# separate ffmpeg binary is needed - the opencv-python wheel bundles
+# FFmpeg, so cv2.VideoCapture opens the resulting HLS URL directly.
+yt-dlp==2026.8.19

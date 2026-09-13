@@ -170,6 +170,58 @@ def format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:05.2f}"
 
 
+def match_frame(
+    frame,
+    reference_embeddings: list[list[float]],
+    model_name: str,
+    detector_backend: str,
+    min_face_area: float,
+) -> tuple[float | None, int, int]:
+    """Best distance to the reference face in one frame.
+
+    Returns (best_distance, faces_checked, faces_too_small); the
+    distance is None when there was nothing worth checking. Detection
+    and embedding are split on purpose - see DEFAULT_MIN_FACE_AREA.
+    Shared with the Phase 2 live watcher, so both paths stay identical.
+    """
+    detected = DeepFace.extract_faces(
+        img_path=frame,
+        detector_backend=detector_backend,
+        enforce_detection=False,
+        color_face="bgr",
+        normalize_face=False,
+    )
+
+    frame_area = frame.shape[0] * frame.shape[1]
+    candidates, too_small = [], 0
+    for face in detected:
+        if face.get("confidence", 1) <= 0:
+            continue
+        area = face["facial_area"]["w"] * face["facial_area"]["h"]
+        if 100.0 * area / frame_area < min_face_area:
+            too_small += 1
+            continue
+        candidates.append(face)
+
+    if not candidates:
+        return None, 0, too_small
+
+    # One batched call: DeepFace runs the whole list through the
+    # recognition model in a single forward pass. Calling it per face
+    # measured 6.1s against 2.5s on a 16-face frame.
+    batch = DeepFace.represent(
+        img_path=[face["face"] for face in candidates],
+        model_name=model_name,
+        detector_backend="skip",
+        enforce_detection=False,
+    )
+    if len(candidates) == 1:
+        batch = [batch]
+
+    distances = [best_distance(faces[0]["embedding"], reference_embeddings) for faces in batch]
+    return min(distances), len(distances), too_small
+
+
 def scan_video(
     video_path: Path,
     reference_embeddings: list[list[float]],
@@ -204,65 +256,22 @@ def scan_video(
         if frame_idx % frame_step == 0:
             timestamp = frame_idx / fps
             _t0 = time.time()
-            # Detection and embedding are split deliberately. Detection
-            # is cheap and finds every face; the embedding pass is what
-            # costs real time and scales with face count. Filtering
-            # between the two means a crowd shot only pays for the
-            # faces big enough to be worth checking.
             try:
-                detected = DeepFace.extract_faces(
-                    img_path=frame,
-                    detector_backend=detector_backend,
-                    enforce_detection=False,
-                    color_face="bgr",
-                    normalize_face=False,
+                distance, checked, too_small = match_frame(
+                    frame, reference_embeddings, model_name, detector_backend, min_face_area
                 )
             except Exception as exc:  # a bad frame shouldn't kill the whole scan
                 print(f"[{format_timestamp(timestamp)}] [warn] frame processing failed: {exc} ({time.time() - _t0:.2f}s)")
                 frame_idx += 1
                 continue
 
-            frame_area = frame.shape[0] * frame.shape[1]
-            candidates, too_small = [], 0
-            for face in detected:
-                if face.get("confidence", 1) <= 0:
-                    continue
-                area = face["facial_area"]["w"] * face["facial_area"]["h"]
-                if 100.0 * area / frame_area < min_face_area:
-                    too_small += 1
-                    continue
-                candidates.append(face)
-
-            # All surviving crops go through represent() in ONE call:
-            # it runs the recognition model over the whole batch in a
-            # single forward pass. Calling it per face instead made a
-            # 16-face frame take 6.1s where the batch takes 2.5s.
-            distances = []
-            if candidates:
-                try:
-                    batch = DeepFace.represent(
-                        img_path=[face["face"] for face in candidates],
-                        model_name=model_name,
-                        detector_backend="skip",
-                        enforce_detection=False,
-                    )
-                except Exception as exc:
-                    print(f"[{format_timestamp(timestamp)}] [warn] embedding failed: {exc}")
-                    batch = []
-                # One crop in gives back that crop's faces directly;
-                # several give back one such list per crop.
-                if len(candidates) == 1:
-                    batch = [batch]
-                distances = [best_distance(faces[0]["embedding"], reference_embeddings) for faces in batch]
-
             elapsed = time.time() - _t0
             skipped_note = f", {too_small} too small" if too_small else ""
-            if distances:
-                distance = min(distances)
+            if distance is not None:
                 is_match = distance <= threshold
                 print(
                     f"[{format_timestamp(timestamp)}] {'MATCH' if is_match else 'no match'} "
-                    f"(distance={distance:.3f}, threshold={threshold:.3f}, faces={len(distances)}{skipped_note}) [{elapsed:.2f}s]"
+                    f"(distance={distance:.3f}, threshold={threshold:.3f}, faces={checked}{skipped_note}) [{elapsed:.2f}s]"
                 )
                 if is_match:
                     matches.append((timestamp, distance))
