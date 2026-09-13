@@ -17,3 +17,8 @@ ultralytics==8.4.150
 # separate ffmpeg binary is needed - the opencv-python wheel bundles
 # FFmpeg, so cv2.VideoCapture opens the resulting HLS URL directly.
 yt-dlp==2026.8.19
+
+# Phase 3: speech-to-text for spoken name mentions. Pulls in PyAV,
+# which decodes the audio track straight out of a video file, so
+# again no ffmpeg binary is needed. Models download on first use.
+faster-whisper==1.2.1
