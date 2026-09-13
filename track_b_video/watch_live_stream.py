@@ -306,6 +306,18 @@ def main():
     )
     args = parser.parse_args()
 
+    # Check this before the slow reference-photo pass, so a typo in the
+    # path doesn't cost a minute of model loading to find out about.
+    if args.cookies and not args.cookies.exists():
+        print(f"No cookies file at: {args.cookies}")
+        print(
+            "Point --cookies at the file your browser extension actually saved "
+            "(usually in Downloads, often named cookies.txt or "
+            "youtube.com_cookies.txt). The path in the docs is only an example, "
+            "not a real location."
+        )
+        sys.exit(1)
+
     reference_embeddings = load_reference_embeddings(args.photos_dir, args.model, args.detector)
     watch(
         args.youtube_url,
