@@ -216,14 +216,53 @@ PHASE 2 - Track B on a real live stream
   - Open for a public version (Phase 7): the cookie workaround depends
     on a personal signed-in account, which does not transfer to a
     service running for many users. Needs a real answer before launch.
+  - KNOWN LIMITATION - false face alerts. Watching a US news stream
+    with reference photos of a Telugu actor still produced 2 alerts in
+    4 minutes, at distances 0.658-0.671 against a 0.680 threshold. The
+    threshold can't simply be tightened, because real matches in Phase
+    1 reached 0.679: the true and false ranges genuinely overlap.
+    What separates them is reference photo quality - frames taken from
+    the stream itself matched at 0.105-0.399, nowhere near the
+    boundary, while two stock photos of a face never seen in that
+    footage sit right at it. Decision (2026-09-14): leave the logic
+    alone and fix this with better, more varied reference photos.
+    Revisit for Phase 4, where a user will actually receive these as
+    notifications; options if it bites are requiring consecutive
+    matching frames before alerting, or asking users for more photos.
 
 PHASE 3 - Track B audio add-on (optional name-mention toggle)
   - Pull audio from the same ffmpeg ingestion.
   - Run speech-to-text on a rolling window, text-search for the
     favorite person's name.
   - Wire up as an optional flag alongside Phase 2's video matching.
+  - Three ways to watch, chosen by the user, not fixed by us:
+      video only            - face matching, as Phase 2
+      video + audio         - face matching plus name mentions
+      audio only            - --audio-only, listens for any text the
+                              user gives and needs NO reference photos
+  - The user also chooses how often to be told, since a recurring word
+    on a news stream alerts constantly: --alert-mode once / cooldown
+    (default, --cooldown-minutes) / every.
   - Done when: correctly flags at least one real name-mention in a
     recorded test clip without excessive false positives.
+  - DONE (2026-09-14). listen_for_name.py for recordings,
+    --listen-for/--audio-only on watch_live_stream.py for live.
+    On the Telugu test clip: 5 real mentions of Ram Charan and 4 of
+    NTR, nothing at all for Prabhas or Allu Arjun who aren't in it.
+    Live: caught real Trump mentions on a news stream while face
+    matching ran alongside it.
+  - Two findings that decided the design, both measured:
+      * TRANSLATE, don't transcribe. Transcribing Telugu took 565s for
+        113s of audio and returned nothing usable; translating to
+        English took 90s - faster than real time - and read cleanly.
+        English also gives romanised names, as a user would type them.
+      * Names always arrive approximate, so match them fuzzily after
+        normalising away case/spaces/punctuation. Whisper wrote
+        "Ramcharan" as one word (so "ram charan" found nothing), and
+        the base model wrote "Sucumar" for Sukumar. Model sizes:
+        tiny 2.9x real time but incoherent, base 2.6x and mangles
+        names, small 1.3-2.2x and reliable - small is the default,
+        because a missed name is a missed alert.
 
 PHASE 4 - Turn into a personal notifying service (single user, both
            tracks)

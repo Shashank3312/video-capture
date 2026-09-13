@@ -102,11 +102,14 @@ service in Phase 4.
 
 ## Track B: general stream watcher (`track_b_video/`)
 
-Phases 1 and 2 are built (`implementation_plan.txt` section 5):
+Phases 1, 2 and 3 are built (`implementation_plan.txt` section 5):
 - `watch_local_video.py` (Phase 1) takes reference photo(s) and a
   local video file, and prints the timestamps where that face appears.
 - `watch_live_stream.py` (Phase 2) watches a real YouTube Live stream
   and alerts once per appearance, verified against a live news stream.
+- `listen_for_name.py` + `name_mentions.py` (Phase 3) find a spoken
+  name in a recording; `--listen-for` adds the same to the live
+  watcher, and `--audio-only` runs it with no video and no photos.
 - `benchmark_detectors.py` compares detector backends on real footage.
 
 The per-frame matching lives in `match_frame()` in
@@ -238,6 +241,48 @@ Things that will otherwise cost an hour to rediscover:
   latest frame. Reading in order would put the watcher further behind
   the live edge with every frame until it alerts about something that
   happened minutes ago - which would defeat the entire point.
+- **Known limitation: false face alerts.** Stock reference photos of
+  someone absent from a stream still matched at 0.658-0.671 against a
+  0.680 threshold. The threshold can't just be lowered - genuine Phase
+  1 matches reached 0.679, so the ranges overlap. Reference photo
+  quality is what actually separates them (frames from the stream
+  itself matched at 0.105-0.399). Decided 2026-09-14 to fix this with
+  better photos rather than logic; see `implementation_plan.txt`
+  Phase 2 before changing any threshold.
+
+### Phase 3: listening for a name
+
+Three modes, and the mode is the user's choice, not a default we
+impose: video only, video + `--listen-for TEXT`, or `--audio-only`
+with `--listen-for TEXT` (no reference photos needed at all).
+`--alert-mode once|cooldown|every` controls how often it reports a
+recurring word.
+
+```
+.venv\Scripts\python.exe track_b_video\listen_for_name.py <media_path> "Ram Charan"
+.venv\Scripts\python.exe track_b_video\watch_live_stream.py <url> --audio-only --listen-for "Ram Charan" --cookies <cookies.txt>
+```
+
+- **Translate, don't transcribe.** Measured on a Telugu clip:
+  transcribing took 565s for 113s of audio and returned nothing
+  usable; translating to English took 90s, faster than real time, and
+  read cleanly. English output also romanises names, which is how a
+  user would type them.
+- **Match names fuzzily** (`name_mentions.py`). Whisper wrote
+  "Ramcharan" as one word, so a plain search for "ram charan" found
+  nothing, and the `base` model wrote "Sucumar" for Sukumar.
+  Normalising away case/spaces/punctuation fixes the first, the
+  similarity threshold the second.
+- **Don't drop below the `small` model.** tiny (2.9x real time) was
+  incoherent and base (2.6x) mangled names; small runs at 1.3-2.2x,
+  still ahead of real time, and got every name tried.
+- Transcription runs on its own thread, because a window takes several
+  seconds and doing it inline would freeze face matching - video is
+  the primary signal and has to stay responsive.
+- Audio renditions are found by looking for formats with **no video
+  codec**. Don't also require `acodec` to be set: YouTube's HLS audio
+  formats report it as `None`, so requiring it silently excludes
+  exactly the formats you want.
 
 No test suite yet - Phase 1's own "done" bar (see
 `implementation_plan.txt`) is honest accuracy checking against

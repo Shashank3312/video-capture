@@ -59,6 +59,7 @@ os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
 import cv2
 from deepface.modules.verification import find_threshold
 
+from name_mentions import DEFAULT_MODEL_SIZE
 from watch_local_video import (
     DEFAULT_MIN_FACE_AREA,
     DEFAULT_PHOTOS_DIR,
@@ -128,11 +129,92 @@ class LiveFrameReader:
         self._thread.join(timeout=2.0)
 
 
+class NameListener:
+    """Listens for the person's NAME being spoken, on its own thread.
+
+    Separate from the frame loop on purpose. Transcribing a window of
+    audio takes several seconds, and doing that inline would freeze
+    face matching for the duration - the video signal is the primary
+    one and must stay responsive.
+
+    Audio is consumed in fixed windows rather than continuously: STT
+    needs a few seconds of context to be any good, and per-word
+    streaming would cost far more for worse text.
+    """
+
+    def __init__(self, audio_url: str, name: str, model_size: str, window_seconds: float):
+        self.name = name
+        self.window_seconds = window_seconds
+        self._audio_url = audio_url
+        self._model_size = model_size
+        self._stopped = threading.Event()
+        self._lock = threading.Lock()
+        self._pending: list = []          # Mentions found but not yet reported
+        self.failed = None
+        self.windows_done = 0
+        self.heard_words = 0
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def _run(self):
+        try:
+            import av
+            import numpy as np
+
+            from name_mentions import load_model, scan_segments
+
+            model = load_model(self._model_size)
+            container = av.open(self._audio_url)
+            stream = container.streams.audio[0]
+            # Whisper wants 16kHz mono float32; the stream is neither.
+            resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
+
+            buffer = []
+            buffered_samples = 0
+            target_samples = int(16000 * self.window_seconds)
+
+            for frame in container.decode(stream):
+                if self._stopped.is_set():
+                    break
+                for resampled in resampler.resample(frame):
+                    chunk = resampled.to_ndarray().flatten().astype("float32")
+                    buffer.append(chunk)
+                    buffered_samples += len(chunk)
+
+                if buffered_samples < target_samples:
+                    continue
+
+                audio = np.concatenate(buffer)
+                buffer, buffered_samples = [], 0
+
+                segments, _ = model.transcribe(audio, task="translate", beam_size=5)
+                segments = list(segments)
+                mentions = scan_segments(segments, self.name)
+                with self._lock:
+                    self.windows_done += 1
+                    self.heard_words += sum(len(s.text.split()) for s in segments)
+                    if mentions:
+                        self._pending.extend(mentions)
+        except Exception as exc:
+            self.failed = f"{type(exc).__name__}: {exc}"
+
+    def drain(self) -> list:
+        """Hand back any mentions found since the last call."""
+        with self._lock:
+            found, self._pending = self._pending, []
+        return found
+
+    def stop(self):
+        self._stopped.set()
+
+
 def resolve_stream_url(
     youtube_url: str,
     browser: str | None = None,
     cookie_file: Path | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str | None, str]:
     """Resolve a YouTube link to a directly playable stream URL."""
     try:
         import yt_dlp
@@ -145,11 +227,11 @@ def resolve_stream_url(
     # video-only and audio-only renditions with no combined one, so
     # yt-dlp's "best" - which means best stream carrying both - matches
     # nothing at all and fails with "Requested format is not
-    # available". Video-only is what we want regardless: this phase
-    # never looks at audio (that's Phase 3), and skipping it saves
-    # bandwidth. Capped at 720p because a face gets cropped and resized
-    # to 224px anyway, so a larger rendition costs decode time for no
-    # accuracy.
+    # available". Video-only also keeps the frame path lean; the audio
+    # rendition is picked out separately below, and only when
+    # --listen-for asked for it. Capped at 720p because a face gets
+    # cropped and resized to 224px anyway, so a larger rendition costs
+    # decode time for no accuracy.
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -205,7 +287,23 @@ def resolve_stream_url(
     if not stream_url:
         print("yt-dlp resolved the page but gave no playable stream URL.")
         sys.exit(1)
-    return stream_url, info.get("title", "(untitled stream)")
+
+    # The audio rendition comes out of the same metadata rather than a
+    # second network round trip: info["formats"] holds every rendition,
+    # and the audio-only ones are those with no video codec.
+    # An audio rendition is one with no VIDEO codec. Don't also demand
+    # that acodec be set: YouTube's HLS audio formats report acodec as
+    # None rather than a codec name, so requiring it excluded exactly
+    # the formats being looked for.
+    audio_url = None
+    audio_only = [
+        f for f in info.get("formats", [])
+        if f.get("vcodec") in (None, "none") and f.get("acodec") != "none" and f.get("url")
+    ]
+    if audio_only:
+        audio_url = audio_only[-1]["url"]  # last is the highest quality yt-dlp listed
+
+    return stream_url, audio_url, info.get("title", "(untitled stream)")
 
 
 def watch(
@@ -217,15 +315,44 @@ def watch(
     max_minutes: float | None,
     browser: str | None = None,
     cookie_file: Path | None = None,
+    listen_for: str | None = None,
+    audio_model: str = "small",
+    audio_window: float = 30.0,
+    audio_only: bool = False,
+    alert_mode: str = "cooldown",
+    cooldown_minutes: float = 5.0,
 ):
-    stream_url, title = resolve_stream_url(youtube_url, browser, cookie_file)
-    print(f"Watching: {title}\n")
+    stream_url, audio_url, title = resolve_stream_url(youtube_url, browser, cookie_file)
+    print(f"Watching: {title}")
 
-    try:
-        reader = LiveFrameReader(stream_url)
-    except RuntimeError as exc:
-        print(exc)
-        sys.exit(1)
+    listener = None
+    if listen_for:
+        if not audio_url:
+            print(f"[warn] no audio rendition available, can't listen for {listen_for!r}.")
+            if audio_only:
+                print("Nothing left to watch with, stopping.")
+                sys.exit(1)
+        else:
+            also = "" if audio_only else "Also "
+            how_often = {
+                "once": "alerting once, then staying quiet",
+                "cooldown": f"alerting at most once every {cooldown_minutes:g} min",
+                "every": "alerting on every mention",
+            }[alert_mode]
+            print(f"{also}listening for {listen_for!r} (every {audio_window:g}s of audio, {how_often})")
+            listener = NameListener(audio_url, listen_for, audio_model, audio_window)
+            listener.start()
+    print()
+
+    # In audio-only mode nothing decodes video at all - no frames, no
+    # face detection, and no reference photos were ever needed.
+    reader = None
+    if not audio_only:
+        try:
+            reader = LiveFrameReader(stream_url)
+        except RuntimeError as exc:
+            print(exc)
+            sys.exit(1)
 
     threshold = find_threshold(model_name, DISTANCE_METRIC)
     started = time.time()
@@ -233,16 +360,63 @@ def watch(
     misses = 0
     appearance_started_at = None
     alerts = 0
+    name_alerts = 0
+    last_name_alert_at = None
+    windows_reported = 0
     last_frame_id = -1
 
     try:
         while True:
-            if reader.failed:
+            if reader and reader.failed:
                 print(f"\nStream stopped: {reader.failed}.")
                 break
             if max_minutes is not None and (time.time() - started) / 60 >= max_minutes:
                 print(f"\nReached the {max_minutes:g} minute limit, stopping.")
                 break
+
+            # Name mentions are a weaker signal than a face, so they're
+            # reported plainly and never start or end an appearance -
+            # the debounce state belongs to the video alone.
+            if listener:
+                for mention in listener.drain():
+                    now = time.time()
+                    if alert_mode == "once" and name_alerts:
+                        continue
+                    if alert_mode == "cooldown" and last_name_alert_at is not None:
+                        if now - last_name_alert_at < cooldown_minutes * 60:
+                            continue
+                    name_alerts += 1
+                    last_name_alert_at = now
+                    how = "" if mention.score >= 1.0 else f" (heard as {mention.matched!r})"
+                    print(f"\n*** HEARD IT{how}: \"{mention.text}\" ***\n")
+                    if alert_mode == "once":
+                        print(f"(alert-mode 'once': staying quiet about {listen_for!r} from here on)\n")
+
+                # Say something as each window is transcribed. Silence
+                # for minutes on end is indistinguishable from a hang,
+                # and in audio-only mode there's no frame output at all.
+                if listener.windows_done > windows_reported:
+                    windows_reported = listener.windows_done
+                    clock = datetime.now().strftime("%H:%M:%S")
+                    print(
+                        f"[{clock}] listened to {windows_reported * audio_window:.0f}s of audio "
+                        f"({listener.heard_words} words), no {listen_for!r} yet"
+                        if not name_alerts
+                        else f"[{clock}] listened to {windows_reported * audio_window:.0f}s of audio"
+                    )
+
+                if listener.failed:
+                    print(f"[warn] listening stopped: {listener.failed}")
+                    listener = None
+
+            if reader is None:
+                # Audio-only: nothing to do here but let the listener
+                # thread work and report what it finds.
+                if listener is None:
+                    print("Nothing left listening, stopping.")
+                    break
+                time.sleep(0.5)
+                continue
 
             frame, frame_id = reader.latest()
             if frame is None or frame_id == last_frame_id:
@@ -288,10 +462,19 @@ def watch(
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
-        reader.stop()
+        if reader:
+            reader.stop()
+        if listener:
+            listener.stop()
 
     watched = (time.time() - started) / 60
-    print(f"Watched {watched:.1f} minutes, alerted {alerts} time(s).")
+    if audio_only:
+        summary = f"Listened for {watched:.1f} minutes, heard it {name_alerts} time(s)"
+    else:
+        summary = f"Watched {watched:.1f} minutes, alerted {alerts} time(s) on the face"
+        if listen_for:
+            summary += f", {name_alerts} time(s) on what was said"
+    print(summary + ".")
 
 
 def main():
@@ -319,6 +502,43 @@ def main():
         default=None,
         help="path to a cookies.txt export, as an alternative to --browser",
     )
+    parser.add_argument(
+        "--listen-for",
+        default=None,
+        metavar="TEXT",
+        help='also alert when this is said - a name or any phrase, e.g. --listen-for "Ram Charan"',
+    )
+    parser.add_argument(
+        "--audio-only",
+        action="store_true",
+        help="listen only, don't watch: no face matching and no reference photos needed. "
+        "Requires --listen-for",
+    )
+    parser.add_argument(
+        "--audio-model",
+        default=DEFAULT_MODEL_SIZE,
+        help=f"whisper model for --listen-for (default {DEFAULT_MODEL_SIZE}; tiny and base mangle names)",
+    )
+    parser.add_argument(
+        "--audio-window",
+        type=float,
+        default=30.0,
+        help="seconds of audio transcribed at a time (default 30)",
+    )
+    parser.add_argument(
+        "--alert-mode",
+        default="cooldown",
+        choices=["once", "cooldown", "every"],
+        help="how often to alert for what's heard: 'once' tells you the first time and then "
+        "stays quiet, 'cooldown' (default) waits --cooldown-minutes between alerts, "
+        "'every' reports every single mention",
+    )
+    parser.add_argument(
+        "--cooldown-minutes",
+        type=float,
+        default=5.0,
+        help="minutes of silence between alerts when --alert-mode cooldown (default 5)",
+    )
     args = parser.parse_args()
 
     # Check this before the slow reference-photo pass, so a typo in the
@@ -338,7 +558,18 @@ def main():
             )
         sys.exit(1)
 
-    reference_embeddings = load_reference_embeddings(args.photos_dir, args.model, args.detector)
+    if args.audio_only and not args.listen_for:
+        print("--audio-only needs --listen-for: there'd be nothing to listen for otherwise.")
+        print('e.g. --audio-only --listen-for "Ram Charan"')
+        sys.exit(1)
+
+    # Audio-only skips the reference photos entirely - no face is being
+    # matched, so requiring photos would be asking for something that
+    # is never used.
+    reference_embeddings = []
+    if not args.audio_only:
+        reference_embeddings = load_reference_embeddings(args.photos_dir, args.model, args.detector)
+
     watch(
         args.youtube_url,
         reference_embeddings,
@@ -348,6 +579,12 @@ def main():
         args.max_minutes,
         args.browser,
         args.cookies,
+        args.listen_for,
+        args.audio_model,
+        args.audio_window,
+        args.audio_only,
+        args.alert_mode,
+        args.cooldown_minutes,
     )
 
 
