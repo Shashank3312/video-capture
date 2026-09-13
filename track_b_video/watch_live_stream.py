@@ -308,14 +308,19 @@ def main():
 
     # Check this before the slow reference-photo pass, so a typo in the
     # path doesn't cost a minute of model loading to find out about.
-    if args.cookies and not args.cookies.exists():
-        print(f"No cookies file at: {args.cookies}")
-        print(
-            "Point --cookies at the file your browser extension actually saved "
-            "(usually in Downloads, often named cookies.txt or "
-            "youtube.com_cookies.txt). The path in the docs is only an example, "
-            "not a real location."
-        )
+    if args.cookies and not args.cookies.is_file():
+        if args.cookies.is_dir():
+            print(f"That's a folder, not a file: {args.cookies}")
+            print("--cookies needs the exported file itself, e.g. ...\\Downloads\\cookies.txt")
+        else:
+            print(f"No cookies file at: {args.cookies}")
+            print(
+                "Point --cookies at the file your browser extension actually saved "
+                "(usually in Downloads, often named cookies.txt or "
+                "youtube.com_cookies.txt - note Windows may have added a second "
+                ".txt). The path in the docs is only an example, not a real "
+                "location."
+            )
         sys.exit(1)
 
     reference_embeddings = load_reference_embeddings(args.photos_dir, args.model, args.detector)
