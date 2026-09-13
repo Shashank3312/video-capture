@@ -1,3 +1,14 @@
 deepface==0.0.100
 tf-keras==2.21.0
 Pillow==12.3.0
+
+# Must stay on OpenCV 4.x. The 5.0.0.93 wheel has no
+# cv2.CascadeClassifier and ships no haarcascade data files, which
+# breaks DeepFace's "opencv" and "ssd" backends outright, and also
+# breaks any detector that doesn't return eye landmarks (yolov11,
+# yolov12) because DeepFace falls back to the cascade classifier to
+# find eyes for alignment.
+opencv-python==4.14.0.94
+
+# Optional in DeepFace, required for the yolo* detector backends.
+ultralytics==8.4.150

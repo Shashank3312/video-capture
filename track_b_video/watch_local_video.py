@@ -37,22 +37,39 @@ Usage:
         [--photos-dir DIR] [--model MODEL_NAME] [--detector BACKEND]
 
 Defaults point at test_data/reference_photos, use DeepFace's default
-VGG-Face model, and MTCNN as the detector. This is CPU-only - no GPU
-acceleration is possible on this machine: TensorFlow dropped native
-Windows GPU support from 2.11 onwards (would need WSL2). Per-frame
-cost measured in-process (see the per-sample timing this script
-prints) has ranged 1.5-3.5s with MTCNN across different runs on this
-machine, vs. 8-12s with RetinaFace (DeepFace's most accurate but
-slowest detector) - real variance seems to come from system load
-between runs more than anything in the code, so treat these as rough
-ranges, not precise multipliers. DeepFace's own "opencv" backend is
-NOT usable here at all - this installed opencv-python 5.0.0.93 build
-is missing the whole cv2.CascadeClassifier class it needs (confirmed
-by testing, not just a missing data file - don't waste time
-re-attempting an XML-file fix). The one lever fully within your
-control if this is too slow: raise --interval to sample less often
-(cost scales linearly with sample count). See .gitignore - test
-assets are never committed, this repo is public.
+VGG-Face model, and yolov11m as the detector. This is CPU-only - no
+GPU acceleration is possible on this machine: TensorFlow dropped
+native Windows GPU support from 2.11 onwards (would need WSL2).
+
+Detector choice came from benchmark_detectors.py, run on a real 113s
+clip - run it again rather than trusting these numbers if the machine
+or the footage changes. Mean/median seconds per sampled frame, and
+how many of 57 sampled frames matched:
+
+    retinaface   16.48 / 16.10    11 matches   most sensitive, far too
+                                               slow for live use
+    yolov11m      1.23 /  0.92     9 matches   the default
+    mtcnn         1.59 /  1.41     9 matches   was the default
+    yolov11n      0.95 /  0.56     8 matches   fastest usable option
+    yunet         0.43 /  0.43     0 matches   found a face in only
+                                               12 of 57 frames
+    centerface    2.48 /  2.28     5 matches   also crashes on some
+                                               frames (DeepFace bug)
+
+Read those match counts as a band, not a ranking: yolov11s scored
+below both the smaller yolov11n and the larger yolov11m, which is not
+a real size/accuracy ordering, just single-video noise. What the
+numbers do support is that retinaface/yolov11m/mtcnn/yolov11n all
+catch the same main appearances, and yolov11m gets mtcnn's accuracy
+noticeably faster.
+
+Mean sits well above median for the yolo backends because per-frame
+cost scales with how many faces are in the frame (up to 15 here) -
+every detected face gets its own embedding pass.
+
+If this is still too slow, the levers are --interval (cost scales
+linearly with sample count) and --detector yolov11n. See .gitignore -
+test assets are never committed, this repo is public.
 """
 
 import argparse
@@ -172,10 +189,20 @@ def scan_video(
                 continue
 
             elapsed = time.time() - _t0
-            if faces and faces[0].get("face_confidence", 1) > 0:
-                distance = best_distance(faces[0]["embedding"], reference_embeddings)
+            # Check every face in the frame, not just the first one
+            # DeepFace happens to return. Real footage routinely has
+            # several people on screen, and the target being second in
+            # that list is not a reason to miss them. The embeddings
+            # were already computed for all of them anyway, so this
+            # costs only the distance comparisons.
+            real_faces = [f for f in faces if f.get("face_confidence", 1) > 0]
+            if real_faces:
+                distance = min(best_distance(f["embedding"], reference_embeddings) for f in real_faces)
                 is_match = distance <= threshold
-                print(f"[{format_timestamp(timestamp)}] {'MATCH' if is_match else 'no match'} (distance={distance:.3f}, threshold={threshold:.3f}) [{elapsed:.2f}s]")
+                print(
+                    f"[{format_timestamp(timestamp)}] {'MATCH' if is_match else 'no match'} "
+                    f"(distance={distance:.3f}, threshold={threshold:.3f}, faces={len(real_faces)}) [{elapsed:.2f}s]"
+                )
                 if is_match:
                     matches.append((timestamp, distance))
             else:
@@ -217,7 +244,7 @@ def main():
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between sampled frames (default 1.0)")
     parser.add_argument("--photos-dir", type=Path, default=DEFAULT_PHOTOS_DIR)
     parser.add_argument("--model", default="VGG-Face")
-    parser.add_argument("--detector", default="mtcnn")
+    parser.add_argument("--detector", default="yolov11m")
     args = parser.parse_args()
 
     if not args.video_path.exists():

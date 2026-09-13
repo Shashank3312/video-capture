@@ -115,16 +115,31 @@ Approach, and why:
   not a guessed similarity cutoff.
 - Samples the video at a fixed interval (default 1s), not every frame
   - most of a video is redundant for this purpose.
+- **Every** face in a sampled frame is compared, not just the first one
+  DeepFace returns. Real footage routinely has several people on
+  screen (up to 15 in one benchmarked frame), and checking only the
+  first face missed most real appearances - on a benchmark clip mtcnn
+  found 9 matching frames checking all faces vs. 2 checking only the
+  first. It costs nothing extra: DeepFace already computes an
+  embedding for every detected face regardless.
 - Consecutive matching samples are grouped into "appearance" segments
   in the summary, mirroring Track A's debounce idea: report continuous
   appearances, not one alert per sampled hit.
-- Default detector backend is `retinaface`, not DeepFace's own default
-  `opencv` - the installed `opencv-python` 5.0.0.93 wheel is missing
-  the Haar-cascade data file `opencv` needs, a real gap in that wheel,
-  not a config mistake.
+- Default detector backend is `yolov11m`, chosen from real measured
+  numbers via `benchmark_detectors.py`, not published benchmarks -
+  same accuracy as the previous `mtcnn` default but meaningfully
+  faster. `retinaface` is the most sensitive but ~16s/frame here,
+  which rules it out for Phase 2's live streams; `yolov11n` is the
+  speed option. Don't pick a detector for this project without
+  re-running that benchmark.
+- Reference photos larger than 1600px per side are downscaled before
+  detection. Detector cost scales with image size, and a
+  full-resolution 3400x5100 poster made the script look completely
+  hung for many minutes on a single photo.
 - Multiple varied reference photos (different angle/lighting) are
   expected, per Phase 1's plan - a photo with no detectable face is
-  skipped with a warning, not fatal unless none are usable.
+  skipped with a warning, not fatal unless none are usable. `.webp` is
+  accepted alongside jpg/jpeg/png.
 
 Test assets (`track_b_video/test_data/`: reference photos and test
 videos) are gitignored and must never be committed - this repo is
@@ -144,15 +159,32 @@ Set `PYTHONUTF8=1` in the shell before running anything DeepFace-related
 Windows' default console encoding otherwise (a real bug hit during
 setup, not a hypothetical).
 
-(also needs `opencv-python`, `numpy` etc. pulled in transitively by
-`deepface`/`tf-keras` - see the venv used by Track A first if starting
-fresh.)
+**Do not let `opencv-python` upgrade to 5.x.** It's pinned to 4.x in
+`requirements.txt` for a reason: the 5.0.0.93 wheel has no
+`cv2.CascadeClassifier` and ships no haarcascade data files. That
+breaks the `opencv` and `ssd` backends outright, and also breaks
+`yolov11`/`yolov12`, because DeepFace falls back to the cascade
+classifier to locate eyes for alignment whenever a detector returns no
+eye landmarks (see `deepface/modules/detection.py`, and the "for v11
+keypoints are always None" comment in its `Yolo.py`). This was
+misdiagnosed for a long time as a missing XML data file; it is a
+wheel-version problem, and downgrading is the fix.
 
 Drop reference photos into `track_b_video/test_data/reference_photos/`
 and a test clip into `track_b_video/test_data/videos/`, then:
 
 ```
 .venv\Scripts\python.exe track_b_video\watch_local_video.py <video_path> --interval 1.0
+```
+
+`benchmark_detectors.py` compares detector backends on real footage -
+speed, how many frames they find a face in, and how many frames match,
+with every detector scored on byte-identical frames. Re-run it rather
+than guessing (or trusting published benchmarks) whenever the detector
+choice is in question:
+
+```
+.venv\Scripts\python.exe track_b_video\benchmark_detectors.py <video_path> --interval 2.0
 ```
 
 No test suite yet - Phase 1's own "done" bar (see
