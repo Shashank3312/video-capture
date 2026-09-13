@@ -181,11 +181,12 @@ PHASE 2 - Track B on a real live stream
     mid-watch - fail loudly to the console rather than hanging or
     crashing silently.
   - Speed is no longer the blocker it looked like. After the Phase 1
-    detector work, a 113s clip processes in ~60s of frame time on this
-    CPU-only machine - faster than real-time at a 2s sample interval.
-    Per-frame cost still scales with how many faces are on screen
-    (~0.7s for one face, ~2.5s for sixteen), so a crowd scene can
-    still run slower than the stream produces frames.
+    detector work and the minimum-face-size filter, a 113s clip
+    processes in ~62s of frame time on this CPU-only machine - faster
+    than real-time at a 2s sample interval, and 2.6x quicker than
+    before that filter, with identical matches. Crowd scenes were the
+    worst case and are now the biggest saving, since most of an
+    audience is too small to identify anyway.
   - Because of that, don't sample the live stream on a fixed timer.
     Always grab the freshest available frame, process it, then grab
     whatever is freshest when that finishes, discarding what piled up

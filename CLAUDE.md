@@ -122,6 +122,22 @@ Approach, and why:
   found 9 matching frames checking all faces vs. 2 checking only the
   first. It costs nothing extra: DeepFace already computes an
   embedding for every detected face regardless.
+- Detection and embedding are deliberately split (`extract_faces()`,
+  then one batched `represent()` call with `detector_backend="skip"`).
+  Detection is cheap and finds everyone; embedding is what costs, and
+  it scales with face count. Splitting them allows skipping faces
+  below `--min-face-area` before paying for them: 160s -> 62s on a
+  57-frame clip, same matches. Keep the embedding call batched - one
+  `represent()` per face instead of one per frame measured 6.1s vs
+  2.5s on a 16-face frame, because DeepFace batches the whole list
+  into a single forward pass.
+- That size floor is NOT an audience/crowd-skipping rule by face
+  count. Skipping "crowded" frames was the first idea and it is wrong
+  for this domain: on the project's own test footage the strongest
+  matches are in 14- and 16-face frames, because a stage or press
+  shot has the target *in* the crowd. Size works where count doesn't,
+  since distant audience faces are small and the person on stage
+  isn't. See the note on `DEFAULT_MIN_FACE_AREA` before changing it.
 - Consecutive matching samples are grouped into "appearance" segments
   in the summary, mirroring Track A's debounce idea: report continuous
   appearances, not one alert per sampled hit.

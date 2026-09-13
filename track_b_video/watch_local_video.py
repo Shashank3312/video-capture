@@ -67,9 +67,18 @@ Mean sits well above median for the yolo backends because per-frame
 cost scales with how many faces are in the frame (up to 15 here) -
 every detected face gets its own embedding pass.
 
+Faces too small to identify are skipped before the embedding pass -
+see DEFAULT_MIN_FACE_AREA. Measured on the same 57-frame clip, all
+three paths finding exactly the same matches:
+
+    one fused represent() call per frame      160.0s
+    split detect/embed, no size filter        118.4s
+    split detect/embed, skipping < 0.3%        61.9s
+
 If this is still too slow, the levers are --interval (cost scales
-linearly with sample count) and --detector yolov11n. See .gitignore -
-test assets are never committed, this repo is public.
+linearly with sample count), --detector yolov11n, and raising
+--min-face-area (but read its note before trusting a bigger number).
+See .gitignore - test assets are never committed, this repo is public.
 """
 
 import argparse
@@ -91,6 +100,24 @@ DISTANCE_METRIC = "cosine"
 # can take many minutes on a single reference photo, vs. seconds at a
 # smaller size, with no meaningful accuracy loss for this use case.
 MAX_REFERENCE_DIMENSION = 1600
+
+# Skip faces smaller than this percent of the frame. Two reasons, and
+# the speed one is the lesser of them: a face this small in a 720p
+# frame is roughly 50px across, well under the 224px the recognition
+# model wants, so its embedding is unreliable and as likely to produce
+# a false positive as a real hit. It also happens to cut the cost of
+# exactly the frames that cost most - a 16-face crowd shot drops to
+# about 7 faces worth checking.
+#
+# 0.3 was chosen against measured data, not picked for feel: across
+# two different sets of reference photos, the smallest face that ever
+# produced a real match measured 0.90% of the frame, so this leaves
+# roughly 3x of margin. Don't raise it without re-measuring - an
+# audience-skipping rule based on face COUNT was considered first and
+# rejected, because this project's own test footage matches most
+# strongly in 14- and 16-face frames (a stage/press shot, where the
+# target is in the crowd).
+DEFAULT_MIN_FACE_AREA = 0.3
 
 
 def load_capped_image(path: Path, max_dimension: int = MAX_REFERENCE_DIMENSION) -> np.ndarray:
@@ -149,6 +176,7 @@ def scan_video(
     interval: float,
     model_name: str,
     detector_backend: str,
+    min_face_area: float,
 ):
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -176,35 +204,70 @@ def scan_video(
         if frame_idx % frame_step == 0:
             timestamp = frame_idx / fps
             _t0 = time.time()
+            # Detection and embedding are split deliberately. Detection
+            # is cheap and finds every face; the embedding pass is what
+            # costs real time and scales with face count. Filtering
+            # between the two means a crowd shot only pays for the
+            # faces big enough to be worth checking.
             try:
-                faces = DeepFace.represent(
+                detected = DeepFace.extract_faces(
                     img_path=frame,
-                    model_name=model_name,
                     detector_backend=detector_backend,
                     enforce_detection=False,
+                    color_face="bgr",
+                    normalize_face=False,
                 )
             except Exception as exc:  # a bad frame shouldn't kill the whole scan
                 print(f"[{format_timestamp(timestamp)}] [warn] frame processing failed: {exc} ({time.time() - _t0:.2f}s)")
                 frame_idx += 1
                 continue
 
+            frame_area = frame.shape[0] * frame.shape[1]
+            candidates, too_small = [], 0
+            for face in detected:
+                if face.get("confidence", 1) <= 0:
+                    continue
+                area = face["facial_area"]["w"] * face["facial_area"]["h"]
+                if 100.0 * area / frame_area < min_face_area:
+                    too_small += 1
+                    continue
+                candidates.append(face)
+
+            # All surviving crops go through represent() in ONE call:
+            # it runs the recognition model over the whole batch in a
+            # single forward pass. Calling it per face instead made a
+            # 16-face frame take 6.1s where the batch takes 2.5s.
+            distances = []
+            if candidates:
+                try:
+                    batch = DeepFace.represent(
+                        img_path=[face["face"] for face in candidates],
+                        model_name=model_name,
+                        detector_backend="skip",
+                        enforce_detection=False,
+                    )
+                except Exception as exc:
+                    print(f"[{format_timestamp(timestamp)}] [warn] embedding failed: {exc}")
+                    batch = []
+                # One crop in gives back that crop's faces directly;
+                # several give back one such list per crop.
+                if len(candidates) == 1:
+                    batch = [batch]
+                distances = [best_distance(faces[0]["embedding"], reference_embeddings) for faces in batch]
+
             elapsed = time.time() - _t0
-            # Check every face in the frame, not just the first one
-            # DeepFace happens to return. Real footage routinely has
-            # several people on screen, and the target being second in
-            # that list is not a reason to miss them. The embeddings
-            # were already computed for all of them anyway, so this
-            # costs only the distance comparisons.
-            real_faces = [f for f in faces if f.get("face_confidence", 1) > 0]
-            if real_faces:
-                distance = min(best_distance(f["embedding"], reference_embeddings) for f in real_faces)
+            skipped_note = f", {too_small} too small" if too_small else ""
+            if distances:
+                distance = min(distances)
                 is_match = distance <= threshold
                 print(
                     f"[{format_timestamp(timestamp)}] {'MATCH' if is_match else 'no match'} "
-                    f"(distance={distance:.3f}, threshold={threshold:.3f}, faces={len(real_faces)}) [{elapsed:.2f}s]"
+                    f"(distance={distance:.3f}, threshold={threshold:.3f}, faces={len(distances)}{skipped_note}) [{elapsed:.2f}s]"
                 )
                 if is_match:
                     matches.append((timestamp, distance))
+            elif too_small:
+                print(f"[{format_timestamp(timestamp)}] skipped - {too_small} face(s), all too small [{elapsed:.2f}s]")
             else:
                 print(f"[{format_timestamp(timestamp)}] no face detected [{elapsed:.2f}s]")
 
@@ -245,6 +308,15 @@ def main():
     parser.add_argument("--photos-dir", type=Path, default=DEFAULT_PHOTOS_DIR)
     parser.add_argument("--model", default="VGG-Face")
     parser.add_argument("--detector", default="yolov11m")
+    parser.add_argument(
+        "--min-face-area",
+        type=float,
+        default=DEFAULT_MIN_FACE_AREA,
+        help=(
+            "skip faces smaller than this percent of the frame "
+            f"(default {DEFAULT_MIN_FACE_AREA}; use 0 to check every face)"
+        ),
+    )
     args = parser.parse_args()
 
     if not args.video_path.exists():
@@ -252,7 +324,14 @@ def main():
         sys.exit(1)
 
     reference_embeddings = load_reference_embeddings(args.photos_dir, args.model, args.detector)
-    matches = scan_video(args.video_path, reference_embeddings, args.interval, args.model, args.detector)
+    matches = scan_video(
+        args.video_path,
+        reference_embeddings,
+        args.interval,
+        args.model,
+        args.detector,
+        args.min_face_area,
+    )
     summarize(matches, args.interval)
 
 
