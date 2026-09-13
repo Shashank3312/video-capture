@@ -12,6 +12,12 @@ Approach:
   - Load all reference photos from a folder, get one face embedding
     per photo via DeepFace.represent(). A photo with no detectable
     face is reported and skipped (not fatal, unless none are usable).
+    Any reference photo is downscaled first if larger than
+    MAX_REFERENCE_DIMENSION per side - a full-resolution poster/promo
+    photo (e.g. a 3400x5100 IMDb poster) made MTCNN take many minutes
+    on a single reference photo during real testing, since detector
+    cost scales with image size; a smaller version detects the same
+    face in seconds with no meaningful accuracy loss.
   - Sample the video at a fixed interval (not every frame - most of a
     video is redundant for this purpose, and processing every frame
     would be far slower for no real benefit).
@@ -55,15 +61,32 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
+from PIL import Image
 from deepface import DeepFace
 from deepface.modules.verification import find_distance, find_threshold
 
 DEFAULT_PHOTOS_DIR = Path(__file__).resolve().parent / "test_data" / "reference_photos"
 DISTANCE_METRIC = "cosine"
 
+# Face detectors like MTCNN scale in cost with image size - a
+# full-resolution poster/promo photo (e.g. a 3400x5100 IMDb poster)
+# can take many minutes on a single reference photo, vs. seconds at a
+# smaller size, with no meaningful accuracy loss for this use case.
+MAX_REFERENCE_DIMENSION = 1600
+
+
+def load_capped_image(path: Path, max_dimension: int = MAX_REFERENCE_DIMENSION) -> np.ndarray:
+    img = Image.open(path).convert("RGB")
+    width, height = img.size
+    if max(width, height) > max_dimension:
+        scale = max_dimension / max(width, height)
+        img = img.resize((round(width * scale), round(height * scale)), Image.LANCZOS)
+    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+
 
 def load_reference_embeddings(photos_dir: Path, model_name: str, detector_backend: str) -> list[list[float]]:
-    photo_paths = [p for p in photos_dir.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+    photo_paths = [p for p in photos_dir.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp")]
     if not photo_paths:
         print(f"No reference photos found in {photos_dir}")
         sys.exit(1)
@@ -72,7 +95,7 @@ def load_reference_embeddings(photos_dir: Path, model_name: str, detector_backen
     for path in photo_paths:
         try:
             faces = DeepFace.represent(
-                img_path=str(path),
+                img_path=load_capped_image(path),
                 model_name=model_name,
                 detector_backend=detector_backend,
                 enforce_detection=True,
