@@ -101,10 +101,16 @@ service in Phase 4.
 
 ## Track B: general stream watcher (`track_b_video/`)
 
-Phase 1 only so far (`implementation_plan.txt` section 5): local video
-file, no live stream ingestion yet. `watch_local_video.py` takes
-reference photo(s) of a person and a local video file, and prints
-timestamps where that face appears.
+Phases 1 and 2 are built (`implementation_plan.txt` section 5):
+- `watch_local_video.py` (Phase 1) takes reference photo(s) and a
+  local video file, and prints the timestamps where that face appears.
+- `watch_live_stream.py` (Phase 2) watches a real YouTube Live stream
+  and alerts once per appearance, verified against a live news stream.
+- `benchmark_detectors.py` compares detector backends on real footage.
+
+The per-frame matching lives in `match_frame()` in
+`watch_local_video.py` and is imported by the live watcher rather than
+duplicated - change it once, both paths follow.
 
 Approach, and why:
 - Uses **DeepFace** (`DeepFace.represent()`) to get one face embedding
@@ -202,6 +208,35 @@ choice is in question:
 ```
 .venv\Scripts\python.exe track_b_video\benchmark_detectors.py <video_path> --interval 2.0
 ```
+
+### Phase 2: the live watcher
+
+```
+.venv\Scripts\python.exe track_b_video\watch_live_stream.py <youtube_url> --max-minutes 5 --cookies <path\to\cookies.txt>
+```
+
+Things that will otherwise cost an hour to rediscover:
+- **YouTube demands a signed-in session.** A plain request gets "Sign
+  in to confirm you're not a bot". Export a cookies.txt with a "Get
+  cookies.txt" extension **while on youtube.com** - an export taken on
+  any other tab carries Google cookies but not YouTube's `LOGIN_INFO`,
+  and is rejected exactly the same way. That file is a live account
+  session: it's gitignored, and it must stay that way.
+- **Ask yt-dlp for `bestvideo`, never `best`.** Live streams come as
+  separate video-only and audio-only renditions with no combined one,
+  so `best` (which means "carries both") matches nothing and fails
+  with "Requested format is not available". Audio isn't needed until
+  Phase 3 anyway.
+- **No ffmpeg install needed** - the opencv-python wheel bundles it,
+  so `cv2.VideoCapture` opens the HLS URL directly.
+- `OPENCV_FFMPEG_LOGLEVEL` is set before `import cv2`, because YouTube
+  rotates CDN hosts mid-stream and FFmpeg otherwise drowns the output
+  in "Cannot reuse HTTP connection" warnings.
+- **Always read the newest frame, never the next one.** `LiveFrameReader`
+  runs a thread that continuously drains the capture and keeps only the
+  latest frame. Reading in order would put the watcher further behind
+  the live edge with every frame until it alerts about something that
+  happened minutes ago - which would defeat the entire point.
 
 No test suite yet - Phase 1's own "done" bar (see
 `implementation_plan.txt`) is honest accuracy checking against

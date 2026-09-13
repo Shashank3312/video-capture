@@ -195,6 +195,27 @@ PHASE 2 - Track B on a real live stream
   - Still console-only, no app yet.
   - Done when: runs against a real live stream for its full duration
     without crashing, with at most one alert per appearance.
+  - DONE (2026-09-13). watch_live_stream.py, verified against a live
+    news stream: 5 minutes with no crash and no false alert, then 3
+    minutes against a face the stream actually shows, which gave 2
+    appearances and exactly 2 alerts (~35 matching frames between
+    them). 0.2-1.0s per frame, comfortably ahead of real time.
+  - Gotchas worth keeping, all of which cost real time to find:
+      * YouTube answers plain yt-dlp requests with "Sign in to confirm
+        you're not a bot". Needs --cookies from a cookies.txt export
+        taken while ON youtube.com (an export from another tab has
+        Google cookies but not YouTube's LOGIN_INFO, and still fails).
+        An exported cookies.txt is a live account session - gitignored,
+        never commit it.
+      * Live streams are served as separate video-only and audio-only
+        renditions with no combined one, so yt-dlp's "best" matches
+        nothing. Ask for bestvideo; audio isn't wanted until Phase 3.
+      * Set OPENCV_FFMPEG_LOGLEVEL before importing cv2, or FFmpeg
+        buries the output in "Cannot reuse HTTP connection" lines as
+        YouTube rotates CDN hosts.
+  - Open for a public version (Phase 7): the cookie workaround depends
+    on a personal signed-in account, which does not transfer to a
+    service running for many users. Needs a real answer before launch.
 
 PHASE 3 - Track B audio add-on (optional name-mention toggle)
   - Pull audio from the same ffmpeg ingestion.

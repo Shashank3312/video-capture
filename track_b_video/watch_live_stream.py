@@ -42,11 +42,19 @@ Needs PYTHONUTF8=1 set, like everything else DeepFace touches here.
 """
 
 import argparse
+import os
 import sys
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+# Silence FFmpeg's "Cannot reuse HTTP connection for different host"
+# chatter. YouTube serves live segments from rotating CDN hosts, so
+# this fires constantly and buries the actual output - hundreds of
+# lines in a five minute run. Must be set before cv2 loads its FFmpeg
+# plugin, hence before the import below.
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
 
 import cv2
 from deepface.modules.verification import find_threshold
@@ -133,12 +141,19 @@ def resolve_stream_url(
         print("    .venv\\Scripts\\python.exe -m pip install yt-dlp")
         sys.exit(1)
 
-    # Prefer a mid-size rendition: 1080p costs more to decode for no
-    # accuracy gain once faces are cropped and resized to 224px anyway.
+    # Ask for VIDEO ONLY. YouTube serves live streams as separate
+    # video-only and audio-only renditions with no combined one, so
+    # yt-dlp's "best" - which means best stream carrying both - matches
+    # nothing at all and fails with "Requested format is not
+    # available". Video-only is what we want regardless: this phase
+    # never looks at audio (that's Phase 3), and skipping it saves
+    # bandwidth. Capped at 720p because a face gets cropped and resized
+    # to 224px anyway, so a larger rendition costs decode time for no
+    # accuracy.
     options = {
         "quiet": True,
         "no_warnings": True,
-        "format": "best[height<=720]/best",
+        "format": "bestvideo[height<=720]/bestvideo/best",
     }
     # YouTube gates a lot of streams behind an anti-bot check that only
     # a signed-in session gets past, so yt-dlp has to borrow cookies
