@@ -19,12 +19,13 @@ Two watcher tracks:
 - **Track A (sports)**: polls a live scoreboard/data API (no video,
   no ML) to detect when the favorite player is currently
   batting/bowling/etc. Cheapest track, built first.
-- **Track B (general stream watcher)**: not yet built. Will pull a
-  live video stream, sample frames, and face-match against a
-  reference photo, for local events and pre-release/political events.
-  Has a planned opt-in add-on that also runs speech-to-text on the
-  stream's audio to catch the person's name being mentioned, as a
-  lower-confidence secondary signal.
+- **Track B (general stream watcher)**: pulls a live video stream,
+  samples frames, and face-matches against reference photos, for local
+  events and pre-release/political events. Phases 1 and 2 are built
+  and verified (local file, then a real YouTube Live stream). Still to
+  come: the opt-in add-on that runs speech-to-text on the stream's
+  audio to catch the person's name being mentioned, as a
+  lower-confidence secondary signal (Phase 3).
 
 Build order is deliberately phased (Phase 0 through Phase 8 in
 `implementation_plan.txt`): single-user MVP (Phases 0-4) before any
