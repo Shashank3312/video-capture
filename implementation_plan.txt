@@ -158,6 +158,14 @@ PHASE 1 - Track B core prototype (local video file, no live stream yet)
     stored only for the life of the job and deleted when it ends -
     revisited more fully at Phase 7 before any public launch.
   - Test accuracy honestly here before building anything on top of it.
+  - Compare every face in a frame, not just one. Real footage has
+    crowds - benchmark frames here held up to 16 faces, and checking
+    only the first one found 2 matching frames where checking all of
+    them found 9.
+  - Detector backend choice was measured, not assumed, via
+    track_b_video/benchmark_detectors.py. yolov11m is the default;
+    retinaface is more sensitive but ~16s/frame, too slow for Phase 2.
+    Re-run that script rather than re-arguing this from memory.
   - Done when: correctly flags presence at the right timestamps on at
     least 2 manually-checked test videos, with an honest accuracy note
     (false positive/negative rate observed).
@@ -172,6 +180,17 @@ PHASE 2 - Track B on a real live stream
   - Basic error handling: invalid/unplayable link, stream goes offline
     mid-watch - fail loudly to the console rather than hanging or
     crashing silently.
+  - Speed is no longer the blocker it looked like. After the Phase 1
+    detector work, a 113s clip processes in ~60s of frame time on this
+    CPU-only machine - faster than real-time at a 2s sample interval.
+    Per-frame cost still scales with how many faces are on screen
+    (~0.7s for one face, ~2.5s for sixteen), so a crowd scene can
+    still run slower than the stream produces frames.
+  - Because of that, don't sample the live stream on a fixed timer.
+    Always grab the freshest available frame, process it, then grab
+    whatever is freshest when that finishes, discarding what piled up
+    in between - otherwise a slow stretch puts the watcher permanently
+    behind the live edge, alerting on a moment that already passed.
   - Still console-only, no app yet.
   - Done when: runs against a real live stream for its full duration
     without crashing, with at most one alert per appearance.
