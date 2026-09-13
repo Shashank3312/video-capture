@@ -27,3 +27,9 @@ Thumbs.db
 # Personal photos/videos used to test face matching - this repo is
 # public, never commit real people's images or footage.
 track_b_video/test_data/
+
+# Exported browser cookies for yt-dlp. These carry a live, signed-in
+# YouTube session - anyone who got hold of one could act as that
+# account. Never commit them, especially not to a public repo.
+cookies.txt
+*cookies*.txt

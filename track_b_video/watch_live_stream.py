@@ -155,16 +155,27 @@ def resolve_stream_url(
     except Exception as exc:
         message = str(exc)
         print(f"Couldn't read that link: {message}")
-        if "not a bot" in message or "Sign in to confirm" in message:
+        if "cookie" in message.lower():
+            print(
+                "\nThat's a cookie problem, not a problem with the link.\n"
+                "  - 'Could not copy ... cookie database' means the browser is "
+                "still running and holding the file open. Close it completely "
+                "(check the task manager - it often lingers in the background) "
+                "and try again.\n"
+                "  - If it still fails, Chrome and Edge encrypt their cookie "
+                "store on Windows in a way yt-dlp frequently can't read at all. "
+                "Export a cookies.txt with a 'Get cookies.txt' browser extension "
+                "and pass --cookies path\\to\\cookies.txt instead. That path "
+                "always works and doesn't care which browser you use."
+            )
+        elif "not a bot" in message or "Sign in to confirm" in message:
             print(
                 "\nYouTube is asking this request to prove it's not a bot, which "
                 "only a signed-in session can do. Re-run with the browser you're "
                 "signed into YouTube on, e.g.:\n"
                 "    --browser firefox        (or chrome / edge / brave)\n"
-                "If that fails on Chrome or Edge, those encrypt their cookie store "
-                "on Windows in a way yt-dlp often can't read - export a cookies.txt "
-                "with a 'Get cookies.txt' browser extension and pass --cookies "
-                "path\\to\\cookies.txt instead."
+                "or pass --cookies path\\to\\cookies.txt from a 'Get cookies.txt' "
+                "browser extension."
             )
         else:
             print("Check the URL is a real, public, currently-live YouTube stream.")
