@@ -53,6 +53,27 @@ def default_cookies() -> str | None:
 _processes: dict[str, subprocess.Popen] = {}
 _processes_lock = threading.Lock()
 
+LOGS_DIR = Path(__file__).resolve().parent / "logs"
+
+# Noise the ML stack prints on every run, which would otherwise be
+# reported to the user as the reason their job failed.
+_NOISE = ("oneDNN", "cpu_feature_guard", "TF_ENABLE", "absl::", "WARNING", "warnings.warn",
+          "Cannot reuse", "lz4", "I/O operation", "Exception ignored", "local_rendezvous",
+          "huggingface", "symlink", "Developer Mode", "To enable")
+
+
+def _last_error(log_path: Path) -> str:
+    """The most useful line from a crashed watcher's stderr."""
+    try:
+        lines = [ln.strip() for ln in log_path.read_text(encoding="utf-8", errors="replace").splitlines()]
+    except OSError:
+        return "no error output was captured"
+    real = [ln for ln in lines if ln and not any(n in ln for n in _NOISE)]
+    if not real:
+        return "no error output was captured"
+    # The exception line is the last one, and the most informative.
+    return real[-1][:300]
+
 
 def build_command(job: dict) -> list[str]:
     """Turn a stored job into the command line that runs it."""
@@ -174,9 +195,16 @@ def run_job(job_id: str):
     storage.update_job(job_id, status=storage.RUNNING, progress="starting up")
     env = {**dict(__import__("os").environ), "PYTHONUTF8": "1", "PYTHONUNBUFFERED": "1"}
 
+    # Keep stderr rather than discarding it. A crash in the watcher
+    # surfaced only as "exit code 1" with the reason thrown away, which
+    # made a real bug (numpy bool breaking the JSON encoder) invisible
+    # from the app - the traceback only appeared by running the command
+    # again by hand.
+    log_path = LOGS_DIR / f"{job_id}.log"
+    LOGS_DIR.mkdir(exist_ok=True)
     try:
         process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            command, stdout=subprocess.PIPE, stderr=log_path.open("w", encoding="utf-8"),
             text=True, encoding="utf-8", errors="replace", env=env,
             cwd=str(TRACK_B),
         )
@@ -214,7 +242,7 @@ def run_job(job_id: str):
         if current and current["status"] not in storage.FINISHED_STATES:
             storage.update_job(
                 job_id, status=storage.FAILED, outcome="failed",
-                progress=f"the watcher stopped unexpectedly (exit code {process.returncode})",
+                progress=f"the watcher stopped unexpectedly: {_last_error(log_path)}",
             )
 
 

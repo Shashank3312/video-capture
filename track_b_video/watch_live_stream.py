@@ -86,9 +86,24 @@ READ_FAILURES_TO_GIVE_UP = 30
 EMIT_JSON = False
 
 
+def _jsonable(value):
+    """Coerce numpy scalars, which json.dumps refuses.
+
+    DeepFace returns numpy floats, so `distance <= threshold` is a
+    numpy.bool_ rather than a bool, and json.dumps rejects it with the
+    baffling "Object of type bool is not JSON serializable". That
+    killed every video job the moment it looked at its first frame.
+    Handled here rather than at each call site, because these leak in
+    from the ML libraries constantly.
+    """
+    if hasattr(value, "item"):
+        return value.item()
+    return str(value)
+
+
 def emit(event: str, human: str | None = None, **data):
     if EMIT_JSON:
-        print(json.dumps({"event": event, **data}), flush=True)
+        print(json.dumps({"event": event, **data}, default=_jsonable), flush=True)
     elif human is not None:
         print(human, flush=True)
 

@@ -61,3 +61,6 @@ app/uploads/
 # billed against on other Google APIs.
 app/static/firebase-config.js
 !firebase-web-config.example.json
+
+# Watcher stderr, captured so a crashed job can say why.
+app/logs/
