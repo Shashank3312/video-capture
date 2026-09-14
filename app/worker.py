@@ -81,11 +81,15 @@ def build_command(job: dict) -> list[str]:
     kind = job["kind"]
 
     if kind == "sports":
-        return [
+        command = [
             PYTHON, str(TRACK_A / "watch.py"),
             str(params["match_id"]), params["player"],
+            "--json",
             "--interval", str(params.get("poll_seconds", 60)),
         ]
+        if params.get("max_minutes"):
+            command += ["--max-minutes", str(params["max_minutes"])]
+        return command
 
     command = [
         PYTHON, str(TRACK_B / "watch_live_stream.py"), params["url"],

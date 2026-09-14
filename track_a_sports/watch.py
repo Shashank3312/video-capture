@@ -30,9 +30,11 @@ Cricbuzz and taking the number from the match URL.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -43,6 +45,20 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 API_KEY = os.environ.get("RAPIDAPI_KEY")
 API_HOST = "cricbuzz-cricket.p.rapidapi.com"
 HEADERS = {"X-RapidAPI-Key": API_KEY or "", "X-RapidAPI-Host": API_HOST}
+
+# Set by --json, matching watch_live_stream.py. The Phase 4 worker runs
+# this as a subprocess and only reads lines that parse as JSON, so
+# without this a cricket job produced no events at all: it would find
+# the player, print it in prose, and the app would still report the
+# job as having failed without ever sending a notification.
+EMIT_JSON = False
+
+
+def emit(event: str, human: str | None = None, **data):
+    if EMIT_JSON:
+        print(json.dumps({"event": event, **data}), flush=True)
+    elif human is not None:
+        print(human, flush=True)
 
 
 def fetch_scorecard(match_id: int) -> dict | None:
@@ -168,15 +184,23 @@ def current_bowler(innings: dict, previous_bowler_balls: dict[str, int] | None) 
     return best_name, snapshot
 
 
-def watch(match_id: int, player_name: str, interval: int):
+def watch(match_id: int, player_name: str, interval: int, max_minutes: float | None = None):
     player_name = player_name.strip().lower()
     previously_batting: set[str] = set()
     previous_bowler: str | None = None
     previous_bowler_balls: dict[str, int] | None = None
+    started = time.time()
 
-    print(f"Watching match {match_id} for '{player_name}' (polling every {interval}s)...")
+    emit("started", f"Watching match {match_id} for '{player_name}' (polling every {interval}s)...",
+         title=f"Cricket match {match_id}", match_id=match_id, player=player_name)
 
     while True:
+        if max_minutes is not None and (time.time() - started) / 60 >= max_minutes:
+            emit("finished", f"\nReached the {max_minutes:g} minute limit, stopping.",
+                 outcome="expired",
+                 reason="the time limit ran out and they never came on")
+            return "expired"
+
         scorecard = fetch_scorecard(match_id)
         if scorecard is None:
             time.sleep(interval)
@@ -184,7 +208,8 @@ def watch(match_id: int, player_name: str, interval: int):
 
         innings = current_innings(scorecard)
         if innings is None:
-            print("[info] no innings currently in progress (between innings, or match not live)")
+            emit("progress", "[info] no innings currently in progress (between innings, or match not live)",
+                 detail="no innings in progress")
             time.sleep(interval)
             continue
 
@@ -192,16 +217,22 @@ def watch(match_id: int, player_name: str, interval: int):
         newly_batting = batting_now - previously_batting
         for name in newly_batting:
             if player_name in name.lower():
-                print(f"ALERT: {name} has come in to bat!")
-                print("Task completed.")
-                return
+                emit("alert", f"ALERT: {name} has come in to bat!",
+                     kind="sport", at=datetime.now().strftime("%H:%M:%S"),
+                     heard=f"{name} has come in to bat")
+                emit("finished", "Task completed.", outcome="matched",
+                     reason=f"{name} came in to bat")
+                return "matched"
 
         bowler_name, previous_bowler_balls = current_bowler(innings, previous_bowler_balls)
         if bowler_name and bowler_name != previous_bowler:
             if player_name in bowler_name.lower():
-                print(f"ALERT: {bowler_name} has come on to bowl!")
-                print("Task completed.")
-                return
+                emit("alert", f"ALERT: {bowler_name} has come on to bowl!",
+                     kind="sport", at=datetime.now().strftime("%H:%M:%S"),
+                     heard=f"{bowler_name} has come on to bowl")
+                emit("finished", "Task completed.", outcome="matched",
+                     reason=f"{bowler_name} came on to bowl")
+                return "matched"
             previous_bowler = bowler_name
 
         previously_batting = batting_now
@@ -213,14 +244,21 @@ def main():
     parser.add_argument("match_id", type=int)
     parser.add_argument("player_name")
     parser.add_argument("--interval", type=int, default=60, help="seconds between polls (default 60)")
+    parser.add_argument("--max-minutes", type=float, default=None,
+                        help="give up after this long (default: watch until they appear)")
+    parser.add_argument("--json", action="store_true",
+                        help="emit one JSON event per line - how the Phase 4 worker reads this")
     args = parser.parse_args()
 
+    global EMIT_JSON
+    EMIT_JSON = args.json
+
     if not API_KEY:
-        print(
-            "Missing RAPIDAPI_KEY. Copy .env.example to .env (in the "
-            "project root) and paste your RapidAPI key into it, then run "
-            "this again."
-        )
+        emit("finished",
+             "Missing RAPIDAPI_KEY. Copy .env.example to .env (in the "
+             "project root) and paste your RapidAPI key into it, then run "
+             "this again.",
+             outcome="failed", reason="no RAPIDAPI_KEY configured")
         sys.exit(1)
 
     squads = fetch_playing_xi(args.match_id)
@@ -229,14 +267,17 @@ def main():
         all_names = [name for names in squads.values() for name in names]
         if not any(target in name.lower() for name in all_names):
             team_list = ", ".join(squads.keys()) or "either team"
-            print(f"'{args.player_name}' is not in the playing XI for {team_list} in this match.")
-            print("Double-check the spelling, or that this is the right match_id.")
+            emit("finished",
+                 f"'{args.player_name}' is not in the playing XI for {team_list} in this match.\n"
+                 "Double-check the spelling, or that this is the right match_id.",
+                 outcome="failed",
+                 reason=f"{args.player_name} is not in the playing XI for this match")
             sys.exit(1)
 
     try:
-        watch(args.match_id, args.player_name, args.interval)
+        watch(args.match_id, args.player_name, args.interval, args.max_minutes)
     except KeyboardInterrupt:
-        print("\nStopped.")
+        emit("finished", "\nStopped.", outcome="failed", reason="stopped by hand")
 
 
 if __name__ == "__main__":
