@@ -288,6 +288,54 @@ No test suite yet - Phase 1's own "done" bar (see
 `implementation_plan.txt`) is honest accuracy checking against
 manually-verified timestamps on real test videos, not automated tests.
 
+## Phase 4: the notifying service (`app/`)
+
+FastAPI + SQLite + a mobile web page. Start a watch job from a phone,
+a worker runs it, and a push notification arrives when the person
+shows up.
+
+```
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+<cloudflared> tunnel --url http://localhost:8000
+```
+
+- `storage.py` - jobs in SQLite. Every job ends as **matched /
+  expired / failed** with a reason that agrees with the outcome.
+  Reporting "matched" while the reason read "the limit ran out" was a
+  real bug; so was letting an expired job end silently. A job that
+  finds nothing still notifies - "they never turned up" is the answer
+  the user was waiting for.
+- `worker.py` - runs watchers as **subprocesses**, reading their
+  `--json` events. Not threads: the models are hundreds of megabytes
+  and a process exit frees them reliably, a crash takes the job rather
+  than the server, and cancelling is just a terminate.
+- `push.py` - FCM. Optional: with no service account key the app still
+  runs jobs, it just says notifications are off.
+- `cricket.py` - live matches for the picker, because a Cricbuzz match
+  id is an internal number no user can know.
+
+Things that cost hours and will again:
+- **A restricted Google API key blocks the tunnel domain.** The
+  browser says "Installations: Create Installation request failed ...
+  referer ... are blocked" and never mentions the API key. Allowed
+  referrers (Google Cloud console → Credentials) must include wherever
+  the app is served from - `*.trycloudflare.com/*` while testing.
+- **Firebase rejects a non-HTTPS tap-through link and drops the whole
+  notification with it.** The app learns its public address from
+  incoming requests because a tunnel hostname changes every restart.
+- **`new Notification(...)` is an illegal constructor on Android
+  Chrome** - use `registration.showNotification()`. This is why a
+  notification arriving while the page was open never appeared.
+- The Firebase **web config and VAPID key are public** (they ship to
+  every browser); the **service account JSON is not**. It's found by
+  reading its contents, not its filename - the real download was
+  called "firebase admin SDK.json" and matched no sensible pattern.
+- Secret scanning will flag the Google API key wherever it's
+  committed, so the web config is served from an untracked
+  `firebase-web-config.json` (template: `.example.json`).
+
+No auth: anyone who reaches the tunnel can start jobs. That's Phase 5.
+
 ## Git workflow
 
 This repo is scoped to just this project (`Shashank3312/video-capture`

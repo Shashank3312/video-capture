@@ -289,6 +289,39 @@ PHASE 4 - Turn into a personal notifying service (single user, both
   - Done when: you receive a real push notification on your own
     phone, tap it, and land on the live event, for both an A-track and
     a B-track job.
+  - Built and verified (2026-09-14), B-track half complete:
+      * a job started from the phone ran a real watcher, alerted, and
+        the notification arrived on the phone
+      * tapping it opened the live YouTube stream - the tap-through is
+        the point of the whole thing, so this is the criterion that
+        mattered
+      * jobs that find nothing now notify too ("time's up, they never
+        showed"), with a "watch again" button, because silence is
+        indistinguishable from a crash
+  - STILL OUTSTANDING: the A-track (cricket) job has never been run
+    end to end - no match has been in progress while testing. Phase 4
+    is not finished until one is.
+  - Three things cost real time here, all worth remembering:
+      * A restricted Google API key blocks the tunnel domain. The
+        browser reports it as "Installations: Create Installation
+        request failed ... referer ... are blocked", which never
+        mentions the API key at all. Allowed referrers must include
+        wherever the app is actually served from.
+      * Firebase rejects a tap-through link that isn't absolute HTTPS,
+        and discards the whole notification with it. Behind a tunnel
+        the app has to learn its own public address from an incoming
+        request - it cannot know it otherwise.
+      * On Android Chrome, `new Notification(...)` is an illegal
+        constructor: it must go through the service worker
+        registration. A notification arriving while the app was on
+        screen silently never appeared.
+  - Known gap: jobs started from the phone carry no YouTube cookies,
+    so they depend on the bot check not firing. It didn't during
+    testing, but it is inconsistent rather than absent - the server
+    should fall back to a local cookies file.
+  - Known gap: no authentication. Anyone who can reach the tunnel can
+    start jobs. Acceptable for a personal test behind a temporary URL,
+    and exactly what Phase 5 addresses.
 
 PHASE 5 - Multi-user accounts
   - Add Firebase Auth so multiple people can have accounts, their own
