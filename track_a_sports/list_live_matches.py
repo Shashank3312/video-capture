@@ -28,6 +28,16 @@ def main():
 
     response = requests.get(f"https://{API_HOST}/matches/v1/live", headers=HEADERS, timeout=15)
     response.raise_for_status()
+
+    # When no cricket is being played the API answers 204 No Content
+    # with an empty body, not an empty list. raise_for_status() is
+    # happy with a 2xx, so this used to blow up in json() with
+    # "Expecting value: line 1 column 1" - which reads like a broken
+    # API rather than "there's no cricket on".
+    if response.status_code == 204 or not response.text.strip():
+        print("No matches currently in progress.")
+        return
+
     data = response.json()
 
     found = False

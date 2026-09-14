@@ -53,6 +53,13 @@ def live_matches() -> list[dict]:
     if not response.ok:
         raise CricketUnavailable(f"The cricket API returned {response.status_code}.")
 
+    # 204 No Content, with an empty body, is how the API says "no
+    # cricket is being played right now". It's a success code, so it
+    # reaches here and would break json() with a parse error that
+    # sounds like a broken API instead of a quiet afternoon.
+    if response.status_code == 204 or not response.text.strip():
+        return []
+
     matches = []
     for type_match in response.json().get("typeMatches", []):
         for series in type_match.get("seriesMatches", []):
