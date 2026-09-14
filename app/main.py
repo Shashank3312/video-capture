@@ -15,6 +15,7 @@ Run it:
     .venv\\Scripts\\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 
+import json
 import shutil
 from pathlib import Path
 
@@ -110,20 +111,27 @@ async def create_job(
         if kind == "audio" and not listen_for:
             raise HTTPException(400, "an audio job needs something to listen for")
 
+    # Check this BEFORE the job row exists. Creating it first and then
+    # rejecting left an orphaned "pending" job that would never run and
+    # never resolve - the one outcome this app is not allowed to have.
+    has_photo = photo is not None and bool(photo.filename)
+    if kind == "video" and not has_photo:
+        raise HTTPException(400, "a video job needs at least one reference photo")
+
     job_id = storage.create_job(kind, params)
 
-    # A face job needs reference photos, and they're per-job so one
-    # person's photos never leak into another job's matching.
-    if photo is not None and photo.filename:
+    # Reference photos are per-job, so one person's photos never leak
+    # into another job's matching.
+    if has_photo:
         job_photos = UPLOADS_DIR / job_id
         job_photos.mkdir(parents=True, exist_ok=True)
+        # .name only: a filename is attacker-controlled, and without
+        # this a crafted one could write outside the uploads folder.
         target = job_photos / Path(photo.filename).name
         with target.open("wb") as out:
             shutil.copyfileobj(photo.file, out)
         params["photos_dir"] = str(job_photos)
-        storage.update_job(job_id, params=__import__("json").dumps(params))
-    elif kind == "video":
-        raise HTTPException(400, "a video job needs at least one reference photo")
+        storage.update_job(job_id, params=json.dumps(params))
 
     worker.start_job(job_id)
     return {"id": job_id, "status": storage.PENDING}
@@ -209,8 +217,6 @@ def firebase_config():
     it in an untracked file avoids both the alert and that risk,
     without pretending the browser never sees it.
     """
-    import json as _json
-
     if not WEB_CONFIG_PATH.is_file():
         body = (
             "const firebaseConfig = {};\n"
@@ -220,11 +226,11 @@ def firebase_config():
         )
         return Response(body, media_type="application/javascript")
 
-    config = _json.loads(WEB_CONFIG_PATH.read_text(encoding="utf-8"))
+    config = json.loads(WEB_CONFIG_PATH.read_text(encoding="utf-8"))
     vapid = config.pop("vapidKey", "")
     body = (
-        f"const firebaseConfig = {_json.dumps(config, indent=2)};\n"
-        f"self.VAPID_KEY = {_json.dumps(vapid)};\n"
+        f"const firebaseConfig = {json.dumps(config, indent=2)};\n"
+        f"self.VAPID_KEY = {json.dumps(vapid)};\n"
     )
     return Response(body, media_type="application/javascript")
 

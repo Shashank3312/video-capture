@@ -17,10 +17,13 @@ the push notification the user is actually waiting for.
 """
 
 import json
+import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from . import push, storage
 
@@ -28,6 +31,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRACK_B = PROJECT_ROOT / "track_b_video"
 TRACK_A = PROJECT_ROOT / "track_a_sports"
 PYTHON = sys.executable
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def default_cookies() -> str | None:
+    """YouTube cookies to fall back on when a job doesn't carry any.
+
+    A job started from the phone has no way to supply a cookies file,
+    and YouTube's bot check is inconsistent rather than absent - it
+    let test jobs through and will refuse a later one for no visible
+    reason. Falling back to the local export means a phone-started job
+    doesn't fail at 3am on the night it mattered.
+    """
+    configured = os.environ.get("YT_COOKIES")
+    if configured and Path(configured).is_file():
+        return configured
+    local = PROJECT_ROOT / "cookies.txt"
+    return str(local) if local.is_file() else None
 
 _processes: dict[str, subprocess.Popen] = {}
 _processes_lock = threading.Lock()
@@ -51,8 +72,9 @@ def build_command(job: dict) -> list[str]:
     ]
     if params.get("max_minutes"):
         command += ["--max-minutes", str(params["max_minutes"])]
-    if params.get("cookies"):
-        command += ["--cookies", params["cookies"]]
+    cookies = params.get("cookies") or default_cookies()
+    if cookies:
+        command += ["--cookies", cookies]
     if params.get("listen_for"):
         command += ["--listen-for", params["listen_for"]]
     if kind == "audio":
