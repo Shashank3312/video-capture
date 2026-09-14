@@ -163,7 +163,20 @@ def _handle_event(job: dict, event: dict):
         storage.update_job(job["id"], event_title=event.get("title"), status=storage.RUNNING)
         job["event_title"] = event.get("title")
     elif kind == "alert":
-        storage.update_job(job["id"], matched_at=event.get("at") or "", progress="found it")
+        at = event.get("at") or ""
+        heard = event.get("heard")
+        storage.add_alert(
+            job["id"],
+            {
+                "at": at,
+                "kind": event.get("kind", "face"),
+                # For a name, the sentence it was heard in is the
+                # useful detail - it's what tells you whether the hit
+                # was really about your person.
+                "detail": heard[:140] if heard else "on screen",
+            },
+        )
+        storage.update_job(job["id"], matched_at=at, progress=f"found them at {at}" if at else "found them")
         _notify(job, event)
     elif kind == "progress":
         storage.update_job(job["id"], progress=f"listened to {event.get('audio_seconds', 0):.0f}s of audio")

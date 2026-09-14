@@ -71,6 +71,13 @@ def init_db():
             conn.execute("ALTER TABLE jobs ADD COLUMN notified TEXT")
         except sqlite3.OperationalError:
             pass  # already there
+        # Every alert with the time it happened, not just the latest.
+        # "They were on at 21:32 and again at 21:47" is the answer
+        # someone actually wants from a finished watch.
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN alerts_log TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS devices (
@@ -122,7 +129,19 @@ def list_jobs(limit: int = 50) -> list[dict]:
 def _as_dict(row: sqlite3.Row) -> dict:
     job = dict(row)
     job["params"] = json.loads(job["params"])
+    job["alerts_log"] = json.loads(job.get("alerts_log") or "[]")
     return job
+
+
+def add_alert(job_id: str, entry: dict):
+    """Append one alert, with its time, to the job's history."""
+    with _write_lock, _connect() as conn:
+        row = conn.execute("SELECT alerts_log FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None:
+            return
+        log = json.loads(row["alerts_log"] or "[]")
+        log.append(entry)
+        conn.execute("UPDATE jobs SET alerts_log = ? WHERE id = ?", (json.dumps(log), job_id))
 
 
 def save_device(token: str):

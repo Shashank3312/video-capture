@@ -203,6 +203,7 @@ class NameListener:
             buffer = []
             buffered_samples = 0
             target_samples = int(16000 * self.window_seconds)
+            window_started_at = time.time()
 
             for frame in container.decode(stream):
                 if self._stopped.is_set():
@@ -217,6 +218,13 @@ class NameListener:
 
                 audio = np.concatenate(buffer)
                 buffer, buffered_samples = [], 0
+                # Remember when THIS window's audio started arriving,
+                # before transcribing: the mention's real time is that
+                # plus its offset inside the window. Stamping mentions
+                # with "now" instead put everything heard in one window
+                # at the same instant, up to 45s after it was said.
+                audio_began_at = window_started_at
+                window_started_at = time.time()
 
                 segments, _ = model.transcribe(audio, task="translate", beam_size=5)
                 segments = list(segments)
@@ -224,8 +232,9 @@ class NameListener:
                 with self._lock:
                     self.windows_done += 1
                     self.heard_words += sum(len(s.text.split()) for s in segments)
-                    if mentions:
-                        self._pending.extend(mentions)
+                    for mention in mentions:
+                        spoken_at = datetime.fromtimestamp(audio_began_at + mention.start)
+                        self._pending.append((mention, spoken_at.strftime("%H:%M:%S")))
         except Exception as exc:
             self.failed = f"{type(exc).__name__}: {exc}"
 
@@ -417,7 +426,7 @@ def watch(
             # reported plainly and never start or end an appearance -
             # the debounce state belongs to the video alone.
             if listener:
-                for mention in listener.drain():
+                for mention, heard_at in listener.drain():
                     now = time.time()
                     if alert_mode == "cooldown" and last_alert_at is not None:
                         if now - last_alert_at < cooldown_minutes * 60:
@@ -425,9 +434,10 @@ def watch(
                     name_alerts += 1
                     last_alert_at = now
                     how = "" if mention.score >= 1.0 else f" (heard as {mention.matched!r})"
-                    emit("alert", f"\n*** HEARD IT{how}: \"{mention.text}\" ***\n",
-                         kind="name", heard=mention.text, matched=mention.matched,
-                         score=round(mention.score, 3), listen_for=listen_for)
+                    emit("alert", f"[{heard_at}] *** HEARD IT{how}: \"{mention.text}\" ***\n",
+                         kind="name", at=heard_at, heard=mention.text,
+                         matched=mention.matched, score=round(mention.score, 3),
+                         listen_for=listen_for)
                     if alert_mode == "once":
                         # Told you once, so the job is done - same as
                         # Track A's watcher, which exits on its alert

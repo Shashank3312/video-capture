@@ -195,6 +195,7 @@ async function loadJobs() {
         <div class="status ${job.status}">${label(job)}</div>
         <div>${escapeHtml(describe(job))}</div>
         ${job.progress ? `<div class="muted">${escapeHtml(job.progress)}</div>` : ""}
+        ${alertTimes(job)}
         ${done(job.status)
           ? `<button class="ghost" style="width:auto;margin-top:8px;padding:6px 12px;font-size:13px"
                      data-restart="${job.id}">Watch again</button>`
@@ -218,6 +219,22 @@ async function loadJobs() {
       loadJobs();
     })
   );
+}
+
+// When they were on is the whole point of a finished watch, so show
+// every hit with its time rather than only that there was one.
+function alertTimes(job) {
+  const log = job.alerts_log || [];
+  if (!log.length) return "";
+  const rows = log
+    .slice(-6)
+    .map((a) => {
+      const what = a.kind === "name" ? `heard "${a.detail}"` : "on screen";
+      return `<div class="hit"><b>${escapeHtml(a.at || "?")}</b> ${escapeHtml(what)}</div>`;
+    })
+    .join("");
+  const more = log.length > 6 ? `<div class="muted">+${log.length - 6} earlier</div>` : "";
+  return `<div class="hits">${rows}${more}</div>`;
 }
 
 // "expired" is the one people misread, so say what it means rather
