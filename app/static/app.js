@@ -130,6 +130,47 @@ $("#enableBtn").addEventListener("click", () => {
   setUpNotifications();
 });
 
+// Show the face that was actually extracted, before the job runs. A
+// photo in sunglasses matched strangers better than the real person,
+// and nothing in the app gave the user any way to notice.
+const photoInput = document.querySelector("#photoInput");
+if (photoInput) {
+  photoInput.addEventListener("change", async () => {
+    const box = document.querySelector("#photoCheck");
+    const file = photoInput.files && photoInput.files[0];
+    if (!file) {
+      box.classList.add("hide");
+      return;
+    }
+    box.classList.remove("hide");
+    box.innerHTML = `<div class="muted">Checking the photo...</div>`;
+    const body = new FormData();
+    body.append("photo", file);
+    try {
+      const res = await fetch("/api/check-photo", { method: "POST", body });
+      const d = await res.json();
+      if (!d.ok) {
+        box.innerHTML = `<div class="facecheck"><div class="warn-text">${escapeHtml(d.error)}</div></div>`;
+        return;
+      }
+      const notes = [];
+      if (d.faces > 1) notes.push(`${d.faces} faces found - the biggest one will be used`);
+      if (d.small) notes.push("this face is small, which makes matching unreliable");
+      box.innerHTML = `
+        <div class="facecheck">
+          <img src="data:image/jpeg;base64,${d.crop}" alt="detected face">
+          <div>
+            <div>This is the face I'll look for (${d.size}px).</div>
+            <div class="muted">Can you see the eyes clearly? If not, matching will be poor.</div>
+            ${notes.map((n) => `<div class="warn-text">${escapeHtml(n)}</div>`).join("")}
+          </div>
+        </div>`;
+    } catch (err) {
+      box.innerHTML = `<div class="muted">Couldn't check the photo: ${escapeHtml(err.message)}</div>`;
+    }
+  });
+}
+
 // ---------------------------------------------------------------- jobs
 
 $("#jobForm").addEventListener("submit", async (event) => {

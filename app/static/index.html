@@ -41,6 +41,10 @@
   .matched { color: var(--good); } .failed { color: var(--bad); }
   .running, .pending { color: var(--accent); } .expired { color: var(--dim); }
   .muted { color: var(--dim); font-size: 13px; }
+  .facecheck { display: flex; gap: 12px; align-items: center; margin-top: 10px;
+               padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+  .facecheck img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
+  .facecheck .warn-text { color: #f0c27a; }
   .hits { margin-top: 8px; border-left: 2px solid var(--line); padding-left: 10px; }
   .hit { font-size: 13px; color: var(--dim); margin: 3px 0; }
   .hit b { color: var(--good); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -77,8 +81,12 @@
 
       <div data-for="video">
         <label>Reference photo of the person</label>
-        <input type="file" name="photo" accept="image/*">
-        <div class="muted">A clear, close-up face works best. More photos means fewer false alarms.</div>
+        <input type="file" name="photo" accept="image/*" id="photoInput">
+        <div class="muted">
+          Face must be clearly visible - <b>no sunglasses</b>, well lit, looking roughly
+          at the camera. Covered eyes make matching unreliable.
+        </div>
+        <div id="photoCheck" class="hide"></div>
       </div>
 
       <div data-for="audio">

@@ -77,6 +77,49 @@ def register_device(token: str = Form(...)):
     return {"ok": True}
 
 
+@app.post("/api/check-photo")
+async def check_photo(photo: UploadFile):
+    """Show what face a reference photo actually yields, before it's used.
+
+    A photo of someone in sunglasses was accepted silently and then
+    matched strangers better than the real person - recognition leans
+    on the eye region, so hiding it leaves an embedding with almost no
+    identity in it. The app couldn't have known the eyes were covered,
+    but it could have shown the crop and let a human see the problem
+    in a second, which is what this does.
+    """
+    import base64
+    import cv2
+    import numpy as np
+
+    raw = np.frombuffer(await photo.read(), np.uint8)
+    image = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+    if image is None:
+        return {"ok": False, "error": "that file isn't an image I can read"}
+
+    from deepface import DeepFace
+
+    faces = DeepFace.extract_faces(
+        img_path=image, detector_backend="yolov11m", enforce_detection=False,
+        color_face="bgr", normalize_face=False,
+    )
+    faces = [f for f in faces if f.get("confidence", 1) > 0]
+    if not faces:
+        return {"ok": False, "error": "no face found in that photo - try a clearer, closer one"}
+
+    biggest = max(faces, key=lambda f: f["facial_area"]["w"] * f["facial_area"]["h"])
+    a = biggest["facial_area"]
+    crop = image[a["y"]: a["y"] + a["h"], a["x"]: a["x"] + a["w"]]
+    ok, buf = cv2.imencode(".jpg", crop)
+    return {
+        "ok": True,
+        "faces": len(faces),
+        "size": f"{a['w']}x{a['h']}",
+        "small": a["w"] < 120 or a["h"] < 120,
+        "crop": base64.b64encode(buf).decode() if ok else None,
+    }
+
+
 @app.post("/api/jobs")
 async def create_job(
     kind: str = Form(...),

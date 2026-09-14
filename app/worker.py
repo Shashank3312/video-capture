@@ -174,6 +174,11 @@ def _handle_event(job: dict, event: dict):
                 # useful detail - it's what tells you whether the hit
                 # was really about your person.
                 "detail": heard[:140] if heard else "on screen",
+                # Keep how confident it was. Without this, a solid
+                # match and a borderline one that squeaked under the
+                # threshold look identical afterwards, and a report of
+                # "it matched the wrong person" can't be investigated.
+                "score": event.get("distance", event.get("score")),
             },
         )
         storage.update_job(job["id"], matched_at=at, progress=f"found them at {at}" if at else "found them")
