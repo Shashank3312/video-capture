@@ -59,26 +59,35 @@ async function loadMatches() {
 
 // ---------------------------------------------------------------- push
 
+function showBanner(message) {
+  $("#pushMessage").textContent = message;
+  banner.classList.remove("hide");
+}
+
 async function setUpNotifications() {
   if (typeof firebaseConfig === "undefined" || !firebaseConfig.apiKey) {
-    banner.textContent =
-      "Notifications aren't set up yet - add your Firebase config to firebase-config.js. " +
-      "Jobs still run; you just won't get alerted on your phone.";
-    banner.classList.remove("hide");
+    showBanner(
+      "Notifications aren't configured on the server yet. Jobs still run; " +
+        "you just won't be alerted on this phone."
+    );
     return;
   }
   if (!("serviceWorker" in navigator) || !("Notification" in window)) {
-    banner.textContent = "This browser can't do push notifications.";
-    banner.classList.remove("hide");
+    showBanner(
+      "This browser can't receive push notifications. On iPhone, use Share -> " +
+        "Add to Home Screen first, then open it from the home screen."
+    );
     return;
   }
   try {
-    firebase.initializeApp(firebaseConfig);
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
     const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
-      banner.textContent = "Notifications are blocked, so alerts can't reach this phone.";
-      banner.classList.remove("hide");
+      showBanner(
+        `Notifications are ${permission}. Tap the lock icon next to the address bar -> ` +
+          "Permissions -> Notifications -> Allow, then tap Enable notifications below."
+      );
       return;
     }
     const messaging = firebase.messaging();
@@ -86,6 +95,7 @@ async function setUpNotifications() {
       vapidKey: window.VAPID_KEY,
       serviceWorkerRegistration: registration,
     });
+    if (!token) throw new Error("Firebase returned no token");
     const body = new FormData();
     body.append("token", token);
     await fetch("/api/devices", { method: "POST", body });
@@ -93,16 +103,32 @@ async function setUpNotifications() {
 
     // A notification arriving while the page is open doesn't show by
     // itself, so show it rather than letting the alert vanish.
+    //
+    // It MUST go through the service worker registration: on Android
+    // Chrome `new Notification(...)` is an illegal constructor and
+    // throws, so a notification arriving while the app was on screen
+    // silently never appeared.
     messaging.onMessage((payload) => {
       const n = payload.notification || {};
-      new Notification(n.title || "Don't Miss The Moment", { body: n.body });
+      const link = (payload.data && payload.data.link) || "/";
+      registration.showNotification(n.title || "Don't Miss The Moment", {
+        body: n.body || "",
+        icon: "/icon.png",
+        data: { link },
+      });
       loadJobs();
     });
   } catch (err) {
-    banner.textContent = "Couldn't set up notifications: " + err.message;
-    banner.classList.remove("hide");
+    // Show the real error. Registration failing silently is what made
+    // "no phone has registered" impossible to act on.
+    showBanner("Couldn't set up notifications: " + (err && err.message ? err.message : err));
   }
 }
+
+$("#enableBtn").addEventListener("click", () => {
+  $("#pushMessage").textContent = "Trying again...";
+  setUpNotifications();
+});
 
 // ---------------------------------------------------------------- jobs
 
@@ -212,7 +238,15 @@ function escapeHtml(text) {
 $("#testBtn").addEventListener("click", async () => {
   const res = await fetch("/api/test-notification", { method: "POST" });
   const data = await res.json();
-  alert(data.ok ? `Sent to ${data.sent} device(s). Check your phone.` : data.error);
+  if (data.ok) {
+    alert(`Sent to ${data.sent} device(s). Check your phone.`);
+    return;
+  }
+  // Point at the fix rather than just restating the problem.
+  alert(
+    data.error +
+      "\n\nScroll to the top of this page and tap 'Enable notifications' to register this phone."
+  );
 });
 
 showModeFields();

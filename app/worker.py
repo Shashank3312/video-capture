@@ -102,7 +102,7 @@ def _notify_outcome(job: dict, status: str, reason: str):
         body=body,
         # Land on the app rather than the stream: there's nothing to
         # see on the stream, the useful next step is rescheduling.
-        link="/",
+        link=push.app_link("/"),
     )
 
 

@@ -44,6 +44,22 @@ def startup():
         print("[push] Firebase ready")
 
 
+@app.middleware("http")
+async def note_public_url(request, call_next):
+    """Learn the public address from whoever just reached us.
+
+    Behind a tunnel the app has no way to know its own URL, and a
+    notification's tap-through link has to be absolute HTTPS. The
+    browser that just made this request knows it, so take it from
+    there rather than making it configuration.
+    """
+    forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host")
+    if host and forwarded_proto == "https":
+        push.remember_base_url(f"https://{host}")
+    return await call_next(request)
+
+
 @app.get("/api/health")
 def health():
     return {
@@ -171,7 +187,7 @@ def test_notification():
         storage.list_device_tokens(),
         title="Don't Miss The Moment",
         body="Notifications are working. This is what an alert will look like.",
-        link="/",
+        link=push.app_link("/"),
     )
     if error:
         return JSONResponse({"ok": False, "error": error}, status_code=400)

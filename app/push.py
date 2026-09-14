@@ -79,6 +79,26 @@ def is_configured() -> bool:
     return _app is not None
 
 
+_public_base_url: str | None = None
+
+
+def remember_base_url(url: str):
+    """Note the address the app is actually reachable at.
+
+    Needed because a notification's tap-through link must be an
+    absolute HTTPS url, and the app can't know its own public address -
+    it sits behind a tunnel whose hostname changes on every restart.
+    Whatever address a browser just reached us on is that address.
+    """
+    global _public_base_url
+    if url.startswith("https://"):
+        _public_base_url = url.rstrip("/")
+
+
+def app_link(path: str = "/") -> str | None:
+    return f"{_public_base_url}{path}" if _public_base_url else None
+
+
 def send(tokens: list[str], title: str, body: str, link: str | None = None) -> tuple[int, str | None]:
     """Notify every registered phone. Returns (sent_count, error)."""
     if not tokens:
@@ -88,6 +108,12 @@ def send(tokens: list[str], title: str, body: str, link: str | None = None) -> t
         return 0, problem
 
     from firebase_admin import messaging
+
+    # Firebase rejects anything that isn't an absolute HTTPS url, and
+    # rejects the whole send with it - so a bad link must not be able
+    # to cost us the notification itself.
+    if link and not link.startswith("https://"):
+        link = app_link("/")
 
     # The link is what makes the notification actionable: tapping it
     # should land on the live event, not just open the app.
