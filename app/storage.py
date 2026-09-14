@@ -58,10 +58,19 @@ def init_db():
                 progress     TEXT,
                 matched_at   TEXT,
                 created_at   TEXT NOT NULL,
-                finished_at  TEXT
+                finished_at  TEXT,
+                notified     TEXT
             )
             """
         )
+        # Whether the user was actually TOLD is the most important fact
+        # about a job, and it used to live in `progress`, which the
+        # finish event overwrote - so a notification that never arrived
+        # left no trace at all. Added separately so it survives.
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN notified TEXT")
+        except sqlite3.OperationalError:
+            pass  # already there
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS devices (

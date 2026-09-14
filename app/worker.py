@@ -120,10 +120,14 @@ def _notify(job: dict, event: dict):
         body=body,
         link=params.get("url"),
     )
-    if error:
-        # Not fatal: the job still found what it was watching for, and
-        # that stays recorded even if the phone never hears about it.
-        storage.update_job(job["id"], progress=f"alert found, but no notification sent ({error})")
+    # Record delivery in its own field: the job finishing will overwrite
+    # progress, and "did they actually get told" must not be the thing
+    # that gets lost. A failure here isn't fatal - the job still found
+    # what it was watching for.
+    storage.update_job(
+        job["id"],
+        notified=f"sent to {sent} device(s)" if not error else f"NOT sent: {error}",
+    )
 
 
 def _notify_outcome(job: dict, status: str, reason: str):
@@ -139,13 +143,17 @@ def _notify_outcome(job: dict, status: str, reason: str):
         heading = "The watch stopped"
         body = f"{reason}. Tap to try again."
 
-    push.send(
+    sent, error = push.send(
         storage.list_device_tokens(),
         title=f"{heading}: {title[:50]}",
         body=body,
         # Land on the app rather than the stream: there's nothing to
         # see on the stream, the useful next step is rescheduling.
         link=push.app_link("/"),
+    )
+    storage.update_job(
+        job["id"],
+        notified=f"sent to {sent} device(s)" if not error else f"NOT sent: {error}",
     )
 
 
