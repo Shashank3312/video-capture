@@ -271,7 +271,13 @@ function alertTimes(job) {
     .slice(-6)
     .map((a) => {
       const what = a.kind === "name" ? `heard "${a.detail}"` : "on screen";
-      return `<div class="hit"><b>${escapeHtml(a.at || "?")}</b> ${escapeHtml(what)}</div>`;
+      // Position into the stream is the useful one - it still means
+      // something tomorrow, and it links straight to the moment.
+      const when = a.position ? `${a.position} in` : a.at || "?";
+      const label = `<b>${escapeHtml(when)}</b> ${escapeHtml(what)}`;
+      return `<div class="hit">${
+        a.seek_url ? `<a href="${escapeHtml(a.seek_url)}" target="_blank">${label}</a>` : label
+      }</div>`;
     })
     .join("");
   const more = log.length > 6 ? `<div class="muted">+${log.length - 6} earlier</div>` : "";

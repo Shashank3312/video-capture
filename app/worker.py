@@ -109,16 +109,22 @@ def _notify(job: dict, event: dict):
     """Turn an alert into the notification the user is waiting for."""
     params = job["params"]
     title = job["event_title"] or params.get("url") or "Your event"
+    where = event.get("stream_position")
     if event.get("kind") == "name":
         body = f"Heard {params.get('listen_for')!r}: {event.get('heard', '')[:120]}"
     else:
         body = "They're on screen now - tap to watch."
+    if where:
+        body += f" ({where} into the stream)"
 
     sent, error = push.send(
         storage.list_device_tokens(),
         title=f"Don't Miss The Moment: {title[:60]}",
         body=body,
-        link=params.get("url"),
+        # Prefer the link that seeks to the moment itself. A
+        # notification gets read minutes later, by which point the live
+        # edge has moved on and is no longer where the thing happened.
+        link=event.get("seek_url") or params.get("url"),
     )
     # Record delivery in its own field: the job finishing will overwrite
     # progress, and "did they actually get told" must not be the thing
@@ -174,6 +180,10 @@ def _handle_event(job: dict, event: dict):
                 # useful detail - it's what tells you whether the hit
                 # was really about your person.
                 "detail": heard[:140] if heard else "on screen",
+                # Where in the stream, which survives long after the
+                # wall-clock time stops meaning anything to anyone.
+                "position": event.get("stream_position"),
+                "seek_url": event.get("seek_url"),
                 # Keep how confident it was. Without this, a solid
                 # match and a borderline one that squeaked under the
                 # threshold look identical afterwards, and a report of

@@ -49,6 +49,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 # Silence FFmpeg's "Cannot reuse HTTP connection for different host"
 # chatter. YouTube serves live segments from rotating CDN hosts, so
@@ -85,6 +86,24 @@ READ_FAILURES_TO_GIVE_UP = 30
 # output; a person at a terminal needs prose. One switch, one emit()
 # below, rather than two copies of every message.
 EMIT_JSON = False
+
+
+class StreamInfo(NamedTuple):
+    video_url: str
+    audio_url: str | None
+    title: str
+    # When the stream went live, if YouTube says. Lets an alert be
+    # reported as a position INTO the stream rather than a wall-clock
+    # time, which is what you need to find the moment again in the
+    # recording afterwards.
+    started_at: float | None
+
+
+def format_stream_position(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 def _jsonable(value):
@@ -234,8 +253,10 @@ class NameListener:
                     self.windows_done += 1
                     self.heard_words += sum(len(s.text.split()) for s in segments)
                     for mention in mentions:
-                        spoken_at = datetime.fromtimestamp(audio_began_at + mention.start)
-                        self._pending.append((mention, spoken_at.strftime("%H:%M:%S")))
+                        spoken_epoch = audio_began_at + mention.start
+                        self._pending.append(
+                            (mention, datetime.fromtimestamp(spoken_epoch).strftime("%H:%M:%S"), spoken_epoch)
+                        )
         except Exception as exc:
             self.failed = f"{type(exc).__name__}: {exc}"
 
@@ -253,7 +274,7 @@ def resolve_stream_url(
     youtube_url: str,
     browser: str | None = None,
     cookie_file: Path | None = None,
-) -> tuple[str, str | None, str]:
+) -> StreamInfo:
     """Resolve a YouTube link to a directly playable stream URL."""
     try:
         import yt_dlp
@@ -342,7 +363,13 @@ def resolve_stream_url(
     if audio_only:
         audio_url = audio_only[-1]["url"]  # last is the highest quality yt-dlp listed
 
-    return stream_url, audio_url, info.get("title", "(untitled stream)")
+    return StreamInfo(
+        video_url=stream_url,
+        audio_url=audio_url,
+        title=info.get("title", "(untitled stream)"),
+        # release_timestamp is when YouTube says the stream went live.
+        started_at=info.get("release_timestamp") or info.get("timestamp"),
+    )
 
 
 def watch(
@@ -362,7 +389,8 @@ def watch(
     cooldown_minutes: float = 5.0,
     threshold_override: float | None = None,
 ):
-    stream_url, audio_url, title = resolve_stream_url(youtube_url, browser, cookie_file)
+    stream = resolve_stream_url(youtube_url, browser, cookie_file)
+    stream_url, audio_url, title = stream.video_url, stream.audio_url, stream.title
     emit("started", f"Watching: {title}", title=title, url=youtube_url)
 
     listener = None
@@ -399,6 +427,28 @@ def watch(
             emit("finished", str(exc), outcome="failed", reason=str(exc))
             sys.exit(1)
 
+    def position_at(moment: float) -> str | None:
+        """How far into the stream a moment is, if we can tell."""
+        if not stream.started_at:
+            return None
+        return format_stream_position(moment - stream.started_at)
+
+    def seek_url(moment: float) -> str | None:
+        """A link that opens the stream AT that moment.
+
+        Landing on the live edge is no use once the moment has passed -
+        and it will have, since a notification is read minutes later.
+        YouTube honours ?t=<seconds> on the archived recording, so the
+        alert can point at the actual instant rather than at "now".
+        """
+        if not stream.started_at:
+            return None
+        offset = int(moment - stream.started_at)
+        if offset <= 0:
+            return None
+        separator = "&" if "?" in youtube_url else "?"
+        return f"{youtube_url}{separator}t={offset}s"
+
     threshold = match_threshold(model_name, threshold_override)
     started = time.time()
     appearing = False
@@ -428,7 +478,7 @@ def watch(
             # reported plainly and never start or end an appearance -
             # the debounce state belongs to the video alone.
             if listener:
-                for mention, heard_at in listener.drain():
+                for mention, heard_at, spoken_epoch in listener.drain():
                     now = time.time()
                     if alert_mode == "cooldown" and last_alert_at is not None:
                         if now - last_alert_at < cooldown_minutes * 60:
@@ -436,8 +486,14 @@ def watch(
                     name_alerts += 1
                     last_alert_at = now
                     how = "" if mention.score >= 1.0 else f" (heard as {mention.matched!r})"
-                    emit("alert", f"[{heard_at}] *** HEARD IT{how}: \"{mention.text}\" ***\n",
-                         kind="name", at=heard_at, heard=mention.text,
+                    # Position INTO the stream, not the wall clock: that's
+                    # what lets someone find the moment again afterwards.
+                    where = position_at(spoken_epoch)
+                    emit("alert",
+                         f"[{heard_at}]" + (f" ({where} in)" if where else "")
+                         + f" *** HEARD IT{how}: \"{mention.text}\" ***\n",
+                         kind="name", at=heard_at, stream_position=where,
+                         seek_url=seek_url(spoken_epoch), heard=mention.text,
                          matched=mention.matched, score=round(mention.score, 3),
                          listen_for=listen_for)
                     if alert_mode == "once":
@@ -530,8 +586,12 @@ def watch(
                     if not muted:
                         alerts += 1
                         last_alert_at = now
-                        emit("alert", f"\n*** ALERT: they're on screen now - {clock} ***\n",
-                             kind="face", at=clock, distance=round(distance, 3))
+                        where = position_at(now)
+                        emit("alert",
+                             f"\n*** ALERT: they're on screen now - {clock}"
+                             + (f" ({where} into the stream)" if where else "") + " ***\n",
+                             kind="face", at=clock, stream_position=where,
+                             seek_url=seek_url(now), distance=round(distance, 3))
                         if alert_mode == "once":
                             emit("task_completed", "Task completed.")
                             outcome, reason = "matched", "they appeared on screen"
