@@ -307,9 +307,24 @@ a worker runs it, and a push notification arrives when the person
 shows up.
 
 ```
+start_app.bat          <- starts both, prints where to find the URL
+```
+
+or by hand:
+
+```
 .venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 <cloudflared> tunnel --url http://localhost:8000
 ```
+
+**The tunnel URL expires and changes.** Cloudflare's free quick tunnels
+die after several hours (`Unauthorized: Tunnel not found` in the
+tunnel window) - the server keeps running fine, so the symptom is just
+"the link stopped working". Restart the tunnel, take the new URL, and
+re-add it to the phone's home screen; the old icon points at a dead
+address. Nothing needs changing in Google Cloud as long as the API
+key's allowed referrers use `*.trycloudflare.com/*` rather than one
+exact hostname. A fixed address is a Phase 6 deployment question.
 
 - `storage.py` - jobs in SQLite. Every job ends as **matched /
   expired / failed** with a reason that agrees with the outcome.
