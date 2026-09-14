@@ -22,8 +22,40 @@ document.querySelectorAll(".modes button").forEach((btn) => {
       b.setAttribute("aria-pressed", String(b === btn))
     );
     showModeFields();
+    if (kind === "sports") loadMatches();
   });
 });
+
+// Nobody knows a Cricbuzz match id, so offer the live matches by name
+// and keep the id out of sight.
+let matchesLoaded = false;
+async function loadMatches() {
+  if (matchesLoaded) return;
+  const picker = $("#matchPicker");
+  const note = $("#matchNote");
+  try {
+    const res = await fetch("/api/cricket/matches");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "couldn't load matches");
+    if (!data.matches.length) {
+      picker.innerHTML = '<option value="">No matches are live right now</option>';
+      note.textContent = "Cricket jobs need a match that's actually in progress.";
+      return;
+    }
+    picker.innerHTML = data.matches
+      .map((m) => `<option value="${m.match_id}">${escapeHtml(m.teams)}</option>`)
+      .join("");
+    note.textContent = data.matches[0].status || "";
+    picker.addEventListener("change", () => {
+      const chosen = data.matches.find((m) => m.match_id === picker.value);
+      note.textContent = chosen ? chosen.status : "";
+    });
+    matchesLoaded = true;
+  } catch (err) {
+    picker.innerHTML = '<option value="">Couldn\'t load matches</option>';
+    note.textContent = err.message;
+  }
+}
 
 // ---------------------------------------------------------------- push
 
@@ -129,16 +161,46 @@ async function loadJobs() {
     box.textContent = "Nothing yet.";
     return;
   }
+  const done = (s) => ["expired", "failed", "matched"].includes(s);
   box.innerHTML = jobs
     .map(
       (job) => `
       <div class="job">
-        <div class="status ${job.status}">${job.status}${job.outcome && job.outcome !== job.status ? " - " + job.outcome : ""}</div>
+        <div class="status ${job.status}">${label(job)}</div>
         <div>${escapeHtml(describe(job))}</div>
         ${job.progress ? `<div class="muted">${escapeHtml(job.progress)}</div>` : ""}
+        ${done(job.status)
+          ? `<button class="ghost" style="width:auto;margin-top:8px;padding:6px 12px;font-size:13px"
+                     data-restart="${job.id}">Watch again</button>`
+          : `<button class="ghost" style="width:auto;margin-top:8px;padding:6px 12px;font-size:13px"
+                     data-cancel="${job.id}">Stop</button>`}
       </div>`
     )
     .join("");
+
+  box.querySelectorAll("[data-restart]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await fetch(`/api/jobs/${btn.dataset.restart}/restart`, { method: "POST" });
+      loadJobs();
+    })
+  );
+  box.querySelectorAll("[data-cancel]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await fetch(`/api/jobs/${btn.dataset.cancel}/cancel`, { method: "POST" });
+      loadJobs();
+    })
+  );
+}
+
+// "expired" is the one people misread, so say what it means rather
+// than showing a bare status word.
+function label(job) {
+  if (job.status === "expired") return "timed out - never appeared";
+  if (job.status === "matched") return "found them";
+  if (job.status === "failed") return job.outcome === "cancelled" ? "stopped" : "failed";
+  return job.status;
 }
 
 function escapeHtml(text) {

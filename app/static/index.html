@@ -83,8 +83,11 @@
       </div>
 
       <div data-for="sports">
-        <label>Match ID</label>
-        <input name="match_id" placeholder="e.g. 12345" autocomplete="off">
+        <label>Which match?</label>
+        <select name="match_id" id="matchPicker">
+          <option value="">Loading live matches...</option>
+        </select>
+        <div class="muted" id="matchNote"></div>
         <label>Player</label>
         <input name="player" placeholder="e.g. Virat Kohli" autocomplete="off">
       </div>

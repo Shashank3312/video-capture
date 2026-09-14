@@ -83,6 +83,29 @@ def _notify(job: dict, event: dict):
         storage.update_job(job["id"], progress=f"alert found, but no notification sent ({error})")
 
 
+def _notify_outcome(job: dict, status: str, reason: str):
+    """Tell the user a job ended without finding anything."""
+    params = job["params"]
+    title = job["event_title"] or params.get("url") or "Your event"
+    looked_for = params.get("listen_for") or params.get("player") or "them"
+
+    if status == storage.EXPIRED:
+        heading = "Time's up - they never showed"
+        body = f"Watched for {looked_for} and the time ran out. Tap to watch again."
+    else:
+        heading = "The watch stopped"
+        body = f"{reason}. Tap to try again."
+
+    push.send(
+        storage.list_device_tokens(),
+        title=f"{heading}: {title[:50]}",
+        body=body,
+        # Land on the app rather than the stream: there's nothing to
+        # see on the stream, the useful next step is rescheduling.
+        link="/",
+    )
+
+
 def _handle_event(job: dict, event: dict):
     kind = event.get("event")
     if kind == "started":
@@ -101,10 +124,16 @@ def _handle_event(job: dict, event: dict):
             "matched": storage.MATCHED,
             "expired": storage.EXPIRED,
         }.get(outcome, storage.FAILED)
-        storage.update_job(
-            job["id"], status=status, outcome=outcome,
-            progress=event.get("reason") or outcome,
-        )
+        reason = event.get("reason") or outcome
+        storage.update_job(job["id"], status=status, outcome=outcome, progress=reason)
+
+        # A job that ends WITHOUT finding anything still has to say so.
+        # Silence is indistinguishable from the watcher having crashed,
+        # and "they never turned up" is itself the answer the user has
+        # been waiting on - the plan is explicit that every job surfaces
+        # its outcome.
+        if status in (storage.EXPIRED, storage.FAILED):
+            _notify_outcome(job, status, reason)
 
 
 def run_job(job_id: str):

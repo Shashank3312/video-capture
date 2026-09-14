@@ -524,10 +524,19 @@ def watch(
     # Every job resolves as one of three things, and says which. Going
     # quiet is the one outcome the plan rules out - if the person never
     # turned up, that is itself the answer the user is waiting for.
+    #
+    # The reason has to agree with the outcome. Reporting "matched"
+    # while the reason still read "the limit ran out" was a real bug:
+    # jobs that did find something looked like they had merely timed
+    # out, and vice versa.
+    timed_out = bool(reason and "limit ran out" in reason)
     if outcome is None:
-        if alerts or name_alerts:
+        total_alerts = alerts + name_alerts
+        if total_alerts:
             outcome = "matched"
-        elif reason and "limit ran out" in reason:
+            found = f"found them {total_alerts} time(s)"
+            reason = f"{found}, then the time limit ran out" if timed_out else found
+        elif timed_out:
             outcome = "expired"
             reason = "the time limit ran out and they never appeared"
         else:

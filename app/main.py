@@ -22,7 +22,7 @@ from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import push, storage, worker
+from . import cricket, push, storage, worker
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -131,6 +131,37 @@ def cancel_job(job_id: str):
     if not worker.cancel_job(job_id):
         raise HTTPException(404, "that job isn't running")
     return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/restart")
+def restart_job(job_id: str):
+    """Run the same watch again.
+
+    The usual case is a job that timed out before the person appeared:
+    the answer to "they never showed up" is normally "then watch again
+    for a while longer", and retyping the whole thing on a phone is a
+    poor way to ask for that.
+    """
+    old = storage.get_job(job_id)
+    if old is None:
+        raise HTTPException(404, "no such job")
+    new_id = storage.create_job(old["kind"], old["params"])
+    worker.start_job(new_id)
+    return {"id": new_id, "status": storage.PENDING}
+
+
+@app.get("/api/cricket/matches")
+def cricket_matches():
+    """Live matches with their IDs, because nobody knows a match ID.
+
+    Asking a user to supply a Cricbuzz match id is asking them to go
+    and find raw JSON. The watcher needs one, so the app has to offer
+    the choice instead of demanding the answer.
+    """
+    try:
+        return {"matches": cricket.live_matches()}
+    except cricket.CricketUnavailable as exc:
+        raise HTTPException(503, str(exc))
 
 
 @app.post("/api/test-notification")
