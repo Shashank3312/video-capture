@@ -395,7 +395,7 @@ def watch(
     appearance_started_at = None
     alerts = 0
     name_alerts = 0
-    last_name_alert_at = None
+    last_alert_at = None
     windows_reported = 0
     last_frame_id = -1
     done = False
@@ -419,11 +419,11 @@ def watch(
             if listener:
                 for mention in listener.drain():
                     now = time.time()
-                    if alert_mode == "cooldown" and last_name_alert_at is not None:
-                        if now - last_name_alert_at < cooldown_minutes * 60:
+                    if alert_mode == "cooldown" and last_alert_at is not None:
+                        if now - last_alert_at < cooldown_minutes * 60:
                             continue
                     name_alerts += 1
-                    last_name_alert_at = now
+                    last_alert_at = now
                     how = "" if mention.score >= 1.0 else f" (heard as {mention.matched!r})"
                     emit("alert", f"\n*** HEARD IT{how}: \"{mention.text}\" ***\n",
                          kind="name", heard=mention.text, matched=mention.matched,
@@ -503,13 +503,27 @@ def watch(
                 if not appearing:
                     appearing = True
                     appearance_started_at = time.time()
-                    alerts += 1
-                    emit("alert", f"\n*** ALERT: they're on screen now - {clock} ***\n",
-                         kind="face", at=clock, distance=round(distance, 3))
-                    if alert_mode == "once":
-                        emit("task_completed", "Task completed.")
-                        outcome, reason = "matched", "they appeared on screen"
-                        break
+                    # The cooldown has to apply here too. Alerting once
+                    # per appearance sounds right until you watch a news
+                    # stream: camera cuts made 22 "appearances" in 32
+                    # minutes, which is 22 buzzes on someone's phone -
+                    # exactly the spam this project exists to avoid, and
+                    # not what "at most once every N minutes" promises.
+                    now = time.time()
+                    muted = (
+                        alert_mode == "cooldown"
+                        and last_alert_at is not None
+                        and now - last_alert_at < cooldown_minutes * 60
+                    )
+                    if not muted:
+                        alerts += 1
+                        last_alert_at = now
+                        emit("alert", f"\n*** ALERT: they're on screen now - {clock} ***\n",
+                             kind="face", at=clock, distance=round(distance, 3))
+                        if alert_mode == "once":
+                            emit("task_completed", "Task completed.")
+                            outcome, reason = "matched", "they appeared on screen"
+                            break
             elif appearing:
                 misses += 1
                 if misses >= MISSES_TO_END_APPEARANCE:
