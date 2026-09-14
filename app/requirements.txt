@@ -1,0 +1,11 @@
+# Phase 4: the notifying service. Needs track_b_video/requirements.txt
+# installed too - the worker runs those watchers as subprocesses.
+fastapi==0.141.1
+uvicorn==0.52.4
+
+# Multipart form handling, for the reference photo upload.
+python-multipart==0.0.32
+
+# Sends the push notification. Optional at runtime: without a service
+# account key the app still runs jobs, it just can't reach a phone.
+firebase-admin==7.5.0

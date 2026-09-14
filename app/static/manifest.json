@@ -1,0 +1,9 @@
+{
+  "name": "Don't Miss The Moment",
+  "short_name": "The Moment",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1216",
+  "theme_color": "#111418",
+  "icons": []
+}

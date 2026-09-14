@@ -42,6 +42,7 @@ Needs PYTHONUTF8=1 set, like everything else DeepFace touches here.
 """
 
 import argparse
+import json
 import os
 import sys
 import threading
@@ -77,6 +78,19 @@ MISSES_TO_END_APPEARANCE = 3
 # Consecutive failed reads before we call the stream dead. A live
 # stream hiccups; a handful in a row means it's actually gone.
 READ_FAILURES_TO_GIVE_UP = 30
+
+# Set by --json. The Phase 4 worker (app/worker.py) runs this script as
+# a subprocess and reads events off stdout, so it needs structured
+# output; a person at a terminal needs prose. One switch, one emit()
+# below, rather than two copies of every message.
+EMIT_JSON = False
+
+
+def emit(event: str, human: str | None = None, **data):
+    if EMIT_JSON:
+        print(json.dumps({"event": event, **data}), flush=True)
+    elif human is not None:
+        print(human, flush=True)
 
 
 class LiveFrameReader:
@@ -323,14 +337,16 @@ def watch(
     cooldown_minutes: float = 5.0,
 ):
     stream_url, audio_url, title = resolve_stream_url(youtube_url, browser, cookie_file)
-    print(f"Watching: {title}")
+    emit("started", f"Watching: {title}", title=title, url=youtube_url)
 
     listener = None
     if listen_for:
         if not audio_url:
-            print(f"[warn] no audio rendition available, can't listen for {listen_for!r}.")
+            emit("warning", f"[warn] no audio rendition available, can't listen for {listen_for!r}.",
+                 message=f"no audio rendition available for {listen_for!r}")
             if audio_only:
-                print("Nothing left to watch with, stopping.")
+                emit("finished", "Nothing left to watch with, stopping.",
+                     outcome="failed", reason="the stream has no audio track to listen to")
                 sys.exit(1)
         else:
             also = "" if audio_only else "Also "
@@ -339,10 +355,13 @@ def watch(
                 "cooldown": f"alerting at most once every {cooldown_minutes:g} min",
                 "every": "alerting on every mention",
             }[alert_mode]
-            print(f"{also}listening for {listen_for!r} (every {audio_window:g}s of audio, {how_often})")
+            emit("listening",
+                 f"{also}listening for {listen_for!r} (every {audio_window:g}s of audio, {how_often})",
+                 listen_for=listen_for, window=audio_window, alert_mode=alert_mode)
             listener = NameListener(audio_url, listen_for, audio_model, audio_window)
             listener.start()
-    print()
+    if not EMIT_JSON:
+        print()
 
     # In audio-only mode nothing decodes video at all - no frames, no
     # face detection, and no reference photos were ever needed.
@@ -351,7 +370,7 @@ def watch(
         try:
             reader = LiveFrameReader(stream_url)
         except RuntimeError as exc:
-            print(exc)
+            emit("finished", str(exc), outcome="failed", reason=str(exc))
             sys.exit(1)
 
     threshold = find_threshold(model_name, DISTANCE_METRIC)
@@ -366,13 +385,17 @@ def watch(
     last_frame_id = -1
     done = False
 
+    outcome, reason = None, None
     try:
         while True:
             if reader and reader.failed:
-                print(f"\nStream stopped: {reader.failed}.")
+                emit("stream_stopped", f"\nStream stopped: {reader.failed}.", reason=reader.failed)
+                reason = reader.failed
                 break
             if max_minutes is not None and (time.time() - started) / 60 >= max_minutes:
-                print(f"\nReached the {max_minutes:g} minute limit, stopping.")
+                emit("time_limit", f"\nReached the {max_minutes:g} minute limit, stopping.",
+                     minutes=max_minutes)
+                reason = f"the {max_minutes:g} minute limit ran out"
                 break
 
             # Name mentions are a weaker signal than a face, so they're
@@ -387,15 +410,18 @@ def watch(
                     name_alerts += 1
                     last_name_alert_at = now
                     how = "" if mention.score >= 1.0 else f" (heard as {mention.matched!r})"
-                    print(f"\n*** HEARD IT{how}: \"{mention.text}\" ***\n")
+                    emit("alert", f"\n*** HEARD IT{how}: \"{mention.text}\" ***\n",
+                         kind="name", heard=mention.text, matched=mention.matched,
+                         score=round(mention.score, 3), listen_for=listen_for)
                     if alert_mode == "once":
                         # Told you once, so the job is done - same as
                         # Track A's watcher, which exits on its alert
                         # rather than carrying on.
-                        print("Task completed.")
+                        emit("task_completed", "Task completed.")
                         done = True
                         break
                 if done:
+                    outcome, reason = "matched", f"heard {listen_for!r}"
                     break
 
                 # Say something as each window is transcribed. Silence
@@ -404,22 +430,26 @@ def watch(
                 if listener.windows_done > windows_reported:
                     windows_reported = listener.windows_done
                     clock = datetime.now().strftime("%H:%M:%S")
-                    print(
-                        f"[{clock}] listened to {windows_reported * audio_window:.0f}s of audio "
-                        f"({listener.heard_words} words), no {listen_for!r} yet"
-                        if not name_alerts
-                        else f"[{clock}] listened to {windows_reported * audio_window:.0f}s of audio"
-                    )
+                    heard_seconds = windows_reported * audio_window
+                    emit("progress",
+                         f"[{clock}] listened to {heard_seconds:.0f}s of audio "
+                         f"({listener.heard_words} words), no {listen_for!r} yet"
+                         if not name_alerts
+                         else f"[{clock}] listened to {heard_seconds:.0f}s of audio",
+                         audio_seconds=heard_seconds, words=listener.heard_words)
 
                 if listener.failed:
-                    print(f"[warn] listening stopped: {listener.failed}")
+                    emit("warning", f"[warn] listening stopped: {listener.failed}",
+                         message=listener.failed)
                     listener = None
 
             if reader is None:
                 # Audio-only: nothing to do here but let the listener
                 # thread work and report what it finds.
                 if listener is None:
-                    print("Nothing left listening, stopping.")
+                    emit("stream_stopped", "Nothing left listening, stopping.",
+                         reason="the audio listener stopped")
+                    reason = "the audio listener stopped"
                     break
                 time.sleep(0.5)
                 continue
@@ -437,19 +467,21 @@ def watch(
                     frame, reference_embeddings, model_name, detector_backend, min_face_area
                 )
             except Exception as exc:  # one bad frame shouldn't end the watch
-                print(f"[{clock}] [warn] frame failed: {exc}")
+                emit("warning", f"[{clock}] [warn] frame failed: {exc}", message=str(exc))
                 continue
             elapsed = time.time() - t0
 
             is_match = distance is not None and distance <= threshold
             if distance is None:
                 detail = f"{too_small} too small" if too_small else "no face"
-                print(f"[{clock}] {detail} [{elapsed:.1f}s]")
+                emit("frame", f"[{clock}] {detail} [{elapsed:.1f}s]",
+                     match=False, faces=0, too_small=too_small, seconds=round(elapsed, 2))
             else:
-                print(
-                    f"[{clock}] {'MATCH' if is_match else 'no match'} "
-                    f"(distance={distance:.3f}, faces={checked}) [{elapsed:.1f}s]"
-                )
+                emit("frame",
+                     f"[{clock}] {'MATCH' if is_match else 'no match'} "
+                     f"(distance={distance:.3f}, faces={checked}) [{elapsed:.1f}s]",
+                     match=is_match, distance=round(distance, 3), faces=checked,
+                     seconds=round(elapsed, 2))
 
             if is_match:
                 misses = 0
@@ -457,19 +489,24 @@ def watch(
                     appearing = True
                     appearance_started_at = time.time()
                     alerts += 1
-                    print(f"\n*** ALERT: they're on screen now - {clock} ***\n")
+                    emit("alert", f"\n*** ALERT: they're on screen now - {clock} ***\n",
+                         kind="face", at=clock, distance=round(distance, 3))
                     if alert_mode == "once":
-                        print("Task completed.")
+                        emit("task_completed", "Task completed.")
+                        outcome, reason = "matched", "they appeared on screen"
                         break
             elif appearing:
                 misses += 1
                 if misses >= MISSES_TO_END_APPEARANCE:
                     seconds = time.time() - appearance_started_at
-                    print(f"[{clock}] appearance ended (about {seconds:.0f}s on screen)\n")
+                    emit("appearance_end",
+                         f"[{clock}] appearance ended (about {seconds:.0f}s on screen)\n",
+                         seconds=round(seconds))
                     appearing = False
                     misses = 0
     except KeyboardInterrupt:
-        print("\nStopped.")
+        emit("stopped", "\nStopped.")
+        reason = "stopped by hand"
     finally:
         if reader:
             reader.stop()
@@ -483,7 +520,23 @@ def watch(
         summary = f"Watched {watched:.1f} minutes, alerted {alerts} time(s) on the face"
         if listen_for:
             summary += f", {name_alerts} time(s) on what was said"
-    print(summary + ".")
+
+    # Every job resolves as one of three things, and says which. Going
+    # quiet is the one outcome the plan rules out - if the person never
+    # turned up, that is itself the answer the user is waiting for.
+    if outcome is None:
+        if alerts or name_alerts:
+            outcome = "matched"
+        elif reason and "limit ran out" in reason:
+            outcome = "expired"
+            reason = "the time limit ran out and they never appeared"
+        else:
+            outcome = "failed"
+            reason = reason or "the watch ended unexpectedly"
+
+    emit("finished", summary + ".", outcome=outcome, reason=reason,
+         face_alerts=alerts, name_alerts=name_alerts, minutes=round(watched, 1))
+    return outcome
 
 
 def main():
@@ -548,7 +601,15 @@ def main():
         default=5.0,
         help="minutes of silence between alerts when --alert-mode cooldown (default 5)",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit one JSON event per line instead of prose - how the Phase 4 worker reads this",
+    )
     args = parser.parse_args()
+
+    global EMIT_JSON
+    EMIT_JSON = args.json
 
     # Check this before the slow reference-photo pass, so a typo in the
     # path doesn't cost a minute of model loading to find out about.

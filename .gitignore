@@ -33,3 +33,16 @@ track_b_video/test_data/
 # account. Never commit them, especially not to a public repo.
 cookies.txt
 *cookies*.txt
+
+# Firebase service account key. This is a server credential that can
+# send notifications as this project - it must never be committed.
+# The web config and VAPID key are NOT secret and can be; this file is
+# the one that matters.
+*serviceAccount*.json
+*service-account*.json
+*firebase-adminsdk*.json
+
+# Local job database and uploaded reference photos, both of which hold
+# real people's data.
+app/jobs.db
+app/uploads/
