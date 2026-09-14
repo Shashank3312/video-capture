@@ -241,14 +241,26 @@ Things that will otherwise cost an hour to rediscover:
   latest frame. Reading in order would put the watcher further behind
   the live edge with every frame until it alerts about something that
   happened minutes ago - which would defeat the entire point.
-- **Known limitation: false face alerts.** Stock reference photos of
-  someone absent from a stream still matched at 0.658-0.671 against a
-  0.680 threshold. The threshold can't just be lowered - genuine Phase
-  1 matches reached 0.679, so the ranges overlap. Reference photo
-  quality is what actually separates them (frames from the stream
-  itself matched at 0.105-0.399). Decided 2026-09-14 to fix this with
-  better photos rather than logic; see `implementation_plan.txt`
-  Phase 2 before changing any threshold.
+- **The match threshold is 0.55, not DeepFace's 0.68** (see
+  `TUNED_THRESHOLDS` in `watch_local_video.py`). DeepFace's number is
+  tuned on clean photo-to-photo benchmarks; on compressed video frames
+  it is too permissive. A good, clear photo of Putin matched Donald
+  Tusk on a news stream at 0.633 - different people, same demographic,
+  same press-conference lighting. Measured against a face taken from
+  the stream itself, 0.50-0.62 removed every false alarm while keeping
+  all 13 true matches; below 0.45 real matches start disappearing.
+  Re-measure before changing it, and note it's set for VGG-Face only,
+  since that's what it was measured on.
+- **A reference photo with covered eyes is close to useless.** A photo
+  in sunglasses produced an embedding with so little identity in it
+  that a STRANGER scored 0.396 against it while the person themselves
+  scored 0.531 in their own video - the ranking inverted, which no
+  threshold can fix. `/api/check-photo` now shows the user the exact
+  crop that will be searched for, because nothing in the app could
+  otherwise reveal that.
+- Face matching remains the weakest part of this project. Name
+  detection measured 5 real mentions and 0 false positives on the same
+  footage; treat the audio signal as the more trustworthy one.
 
 ### Phase 3: listening for a name
 

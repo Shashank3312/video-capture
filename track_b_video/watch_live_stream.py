@@ -67,6 +67,7 @@ from watch_local_video import (
     DISTANCE_METRIC,
     load_reference_embeddings,
     match_frame,
+    match_threshold,
 )
 
 # How many consecutive non-matching frames end an appearance. One
@@ -359,6 +360,7 @@ def watch(
     audio_only: bool = False,
     alert_mode: str = "cooldown",
     cooldown_minutes: float = 5.0,
+    threshold_override: float | None = None,
 ):
     stream_url, audio_url, title = resolve_stream_url(youtube_url, browser, cookie_file)
     emit("started", f"Watching: {title}", title=title, url=youtube_url)
@@ -397,7 +399,7 @@ def watch(
             emit("finished", str(exc), outcome="failed", reason=str(exc))
             sys.exit(1)
 
-    threshold = find_threshold(model_name, DISTANCE_METRIC)
+    threshold = match_threshold(model_name, threshold_override)
     started = time.time()
     appearing = False
     misses = 0
@@ -595,6 +597,12 @@ def main():
     parser.add_argument("--detector", default="yolov11m")
     parser.add_argument("--min-face-area", type=float, default=DEFAULT_MIN_FACE_AREA)
     parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="match cutoff; lower is stricter (default 0.55 for VGG-Face, see TUNED_THRESHOLDS)",
+    )
+    parser.add_argument(
         "--max-minutes",
         type=float,
         default=None,
@@ -703,6 +711,7 @@ def main():
         args.audio_only,
         args.alert_mode,
         args.cooldown_minutes,
+        args.threshold,
     )
 
 

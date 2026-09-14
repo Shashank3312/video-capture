@@ -119,6 +119,33 @@ MAX_REFERENCE_DIMENSION = 1600
 # target is in the crowd).
 DEFAULT_MIN_FACE_AREA = 0.3
 
+# DeepFace's own VGG-Face/cosine threshold is 0.68, tuned on clean
+# photo-to-photo benchmarks. On compressed video frames it is too
+# permissive, and the failure is the one that matters: a good, clear
+# photo of one person matched a DIFFERENT person on a news stream at
+# 0.633, and stock photos produced false matches at 0.606-0.674.
+#
+# Measured against a face taken from the stream itself, so true-match
+# distances come from the conditions the watcher actually runs in:
+#
+#     threshold   true matches kept   false alarms
+#       0.68          13/37                1      <- DeepFace default
+#       0.62          13/37                0
+#       0.55          13/37                0
+#       0.50          13/37                0
+#       0.45          11/37                0      <- starts costing hits
+#
+# Anything in 0.50-0.62 was clean AND lossless, so 0.55 sits in the
+# middle of that band. Only applied to VGG-Face, which is what this
+# was measured on - another model keeps DeepFace's own number.
+TUNED_THRESHOLDS = {"VGG-Face": 0.55}
+
+
+def match_threshold(model_name: str, override: float | None = None) -> float:
+    if override is not None:
+        return override
+    return TUNED_THRESHOLDS.get(model_name) or find_threshold(model_name, DISTANCE_METRIC)
+
 
 def load_capped_image(path: Path, max_dimension: int = MAX_REFERENCE_DIMENSION) -> np.ndarray:
     img = Image.open(path).convert("RGB")
@@ -229,6 +256,7 @@ def scan_video(
     model_name: str,
     detector_backend: str,
     min_face_area: float,
+    threshold_override: float | None = None,
 ):
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -243,7 +271,7 @@ def scan_video(
     duration = frame_count / fps
     print(f"Video: {video_path.name} | ~{duration:.1f}s | {fps:.2f} fps | sampling every {interval}s\n")
 
-    threshold = find_threshold(model_name, DISTANCE_METRIC)
+    threshold = match_threshold(model_name, threshold_override)
     frame_step = max(1, round(fps * interval))
 
     matches: list[tuple[float, float]] = []  # (timestamp, best_distance) for every match
@@ -318,6 +346,12 @@ def main():
     parser.add_argument("--model", default="VGG-Face")
     parser.add_argument("--detector", default="yolov11m")
     parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="match cutoff; lower is stricter (default 0.55 for VGG-Face, see TUNED_THRESHOLDS)",
+    )
+    parser.add_argument(
         "--min-face-area",
         type=float,
         default=DEFAULT_MIN_FACE_AREA,
@@ -340,6 +374,7 @@ def main():
         args.model,
         args.detector,
         args.min_face_area,
+        args.threshold,
     )
     summarize(matches, args.interval)
 
