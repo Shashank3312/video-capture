@@ -216,6 +216,19 @@ PHASE 2 - Track B on a real live stream
   - Open for a public version (Phase 7): the cookie workaround depends
     on a personal signed-in account, which does not transfer to a
     service running for many users. Needs a real answer before launch.
+  - SOAK TESTED (2026-09-14), 60 minutes, video and audio together -
+    the heaviest configuration. Clean exit, no crash, no warnings, no
+    stalls: 1502 frames, 119 audio windows, 30 alerts, and the
+    finishing outcome read correctly ("found them 30 time(s), then the
+    time limit ran out").
+      * Memory is ~3.5 GB baseline with TensorFlow, Whisper and OpenCV
+        all loaded, and it DRIFTS UP about 300 MB/hour (first half
+        averaged 3508 MB, second half 3666 MB, peak 4022 MB). Not a
+        runaway leak, but not flat either - a 3 hour event should end
+        near 4.5 GB, which is fine on a laptop and rules out small
+        hosting tiers. Worth re-measuring before any all-day watch.
+      * That 3.5 GB floor is the real deployment constraint for Phase
+        6, more than CPU is.
   - KNOWN LIMITATION - false face alerts. Watching a US news stream
     with reference photos of a Telugu actor still produced 2 alerts in
     4 minutes, at distances 0.658-0.671 against a 0.680 threshold. The
