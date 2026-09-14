@@ -13,6 +13,7 @@ works without Firebase set up - jobs still run and still resolve - so
 a missing credential degrades to "no push sent" rather than a crash.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -22,18 +23,28 @@ _app = None
 _import_error = None
 
 
+def _looks_like_service_account(path: Path) -> bool:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return data.get("type") == "service_account" and "private_key" in data
+
+
 def _service_account_path() -> Path | None:
     """Find the Firebase service account key, if there is one.
 
-    Env var first so it can live outside the repo entirely, then the
-    conventional filenames Firebase hands out - all of which are
-    gitignored, because this key can send notifications as the project.
+    Env var first, so the key can live outside the repo entirely.
+    Otherwise identify it by CONTENT rather than filename: Firebase
+    named the real download "firebase admin SDK.json", which matched
+    none of the obvious patterns. Every service account key says so
+    inside, so read that instead of guessing what it's called.
     """
     from_env = os.environ.get("FIREBASE_CREDENTIALS")
     if from_env and Path(from_env).is_file():
         return Path(from_env)
-    for pattern in ("*firebase-adminsdk*.json", "*serviceAccount*.json", "*service-account*.json"):
-        for candidate in sorted(PROJECT_ROOT.glob(pattern)):
+    for candidate in sorted(PROJECT_ROOT.glob("*.json")):
+        if _looks_like_service_account(candidate):
             return candidate
     return None
 

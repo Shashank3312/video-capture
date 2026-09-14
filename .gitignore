@@ -38,9 +38,17 @@ cookies.txt
 # send notifications as this project - it must never be committed.
 # The web config and VAPID key are NOT secret and can be; this file is
 # the one that matters.
+#
+# Ignore EVERY json at the repo root, not just the names Firebase
+# happens to use. The named patterns below missed the real download,
+# which arrived as "firebase admin SDK.json" - spaces, different case -
+# and sat there committable. A credential file should not depend on
+# guessing its name, and nothing at the root needs to be tracked json.
+/*.json
 *serviceAccount*.json
 *service-account*.json
 *firebase-adminsdk*.json
+*firebase*admin*.json
 
 # Local job database and uploaded reference photos, both of which hold
 # real people's data.
