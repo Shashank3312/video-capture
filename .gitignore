@@ -54,3 +54,10 @@ cookies.txt
 # real people's data.
 app/jobs.db
 app/uploads/
+
+# The Firebase web config is served from firebase-web-config.json
+# (gitignored) by app/main.py, not from a tracked file. GitHub flags a
+# Google API key wherever it appears, and an unrestricted one can be
+# billed against on other Google APIs.
+app/static/firebase-config.js
+!firebase-web-config.example.json

@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import push, storage, worker
@@ -145,6 +145,41 @@ def test_notification():
     if error:
         return JSONResponse({"ok": False, "error": error}, status_code=400)
     return {"ok": True, "sent": sent}
+
+
+WEB_CONFIG_PATH = APP_DIR.parent / "firebase-web-config.json"
+
+
+@app.get("/firebase-config.js")
+def firebase_config():
+    """Serve the Firebase web config, which is NOT kept in the repo.
+
+    These values are public by design - they ship to every browser
+    that loads the page, and Firebase access is controlled by security
+    rules, not by hiding them. But GitHub's secret scanner flags a
+    Google API key on sight, and an unrestricted key can be abused
+    against other Google APIs on the same project's billing. Keeping
+    it in an untracked file avoids both the alert and that risk,
+    without pretending the browser never sees it.
+    """
+    import json as _json
+
+    if not WEB_CONFIG_PATH.is_file():
+        body = (
+            "const firebaseConfig = {};\n"
+            "self.VAPID_KEY = '';\n"
+            "console.warn('No firebase-web-config.json - notifications are off. "
+            "See firebase-web-config.example.json.');\n"
+        )
+        return Response(body, media_type="application/javascript")
+
+    config = _json.loads(WEB_CONFIG_PATH.read_text(encoding="utf-8"))
+    vapid = config.pop("vapidKey", "")
+    body = (
+        f"const firebaseConfig = {_json.dumps(config, indent=2)};\n"
+        f"self.VAPID_KEY = {_json.dumps(vapid)};\n"
+    )
+    return Response(body, media_type="application/javascript")
 
 
 # The service worker has to be served from the site root, not /static,

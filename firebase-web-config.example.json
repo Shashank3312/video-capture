@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy this to firebase-web-config.json and fill it in. That file is gitignored. Values come from Firebase console -> Project settings -> General (config) and -> Cloud Messaging -> Web Push certificates (vapidKey).",
+  "apiKey": "",
+  "authDomain": "YOUR-PROJECT.firebaseapp.com",
+  "projectId": "YOUR-PROJECT",
+  "storageBucket": "YOUR-PROJECT.firebasestorage.app",
+  "messagingSenderId": "",
+  "appId": "",
+  "vapidKey": ""
+}
