@@ -33,14 +33,9 @@ skip ahead.
 **Where it stands.** Phases 0-4 are built and verified for both
 tracks: a job started from a phone alerts, the notification arrives,
 and tapping it opens the live event (the stream at the moment it
-happened for Track B, the Cricbuzz scoreboard for Track A).
-
-Still outstanding, and worth knowing before starting anything new:
-- **Phase 1's manual accuracy check never happened.** Its bar is
-  "correctly flags presence at the right timestamps on at least 2
-  manually-checked test videos". Accuracy has since been measured far
-  more rigorously than that (see the threshold note below), but nobody
-  has confirmed the output against human eyes.
+happened for Track B, the Cricbuzz scoreboard for Track A). Phase 1's
+manual accuracy check (below) is also now closed out, so there's
+nothing outstanding in Phases 0-4 - Phase 5 is next.
 
 ## Track A: sports scoreboard watcher (`track_a_sports/`)
 

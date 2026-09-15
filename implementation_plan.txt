@@ -169,6 +169,14 @@ PHASE 1 - Track B core prototype (local video file, no live stream yet)
   - Done when: correctly flags presence at the right timestamps on at
     least 2 manually-checked test videos, with an honest accuracy note
     (false positive/negative rate observed).
+  - DONE (2026-09-15). watch_local_video.py run against a local test
+    clip (Ram Charan, "RC17" news footage) with the reference photo(s)
+    for him. Checked by hand against the video itself: the timestamps
+    it flagged are timestamps he's actually on screen, no mismatch
+    against the photo. This was the one honest-accuracy check that had
+    been outstanding since Phase 1 was first built - all later phases
+    (2-4) had already been re-verified against real footage, but this
+    original check never happened until now.
 
 PHASE 2 - Track B on a real live stream
   - Use yt-dlp to get the stream URL from a real YouTube Live link.
