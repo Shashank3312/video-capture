@@ -30,15 +30,12 @@ Build order is deliberately phased (Phase 0 through Phase 8 in
 multi-user/scaling work (Phases 5+), and Track A before Track B. Don't
 skip ahead.
 
-**Where it stands.** Phases 0-3 are built and verified. Phase 4 (the
-app) is built and verified for Track B end to end: a job started from
-a phone alerts, the notification arrives, and tapping it opens the
-stream at the moment it happened.
+**Where it stands.** Phases 0-4 are built and verified for both
+tracks: a job started from a phone alerts, the notification arrives,
+and tapping it opens the live event (the stream at the moment it
+happened for Track B, the Cricbuzz scoreboard for Track A).
 
 Still outstanding, and worth knowing before starting anything new:
-- **Phase 4's cricket job has never run end to end** - no match has
-  been in progress during testing. Everything for it is in place now,
-  including JSON reporting, so it needs a live match and ten minutes.
 - **Phase 1's manual accuracy check never happened.** Its bar is
   "correctly flags presence at the right timestamps on at least 2
   manually-checked test videos". Accuracy has since been measured far
@@ -390,6 +387,11 @@ exact hostname. A fixed address is a Phase 6 deployment question.
   before starting a job. Added because a photo in sunglasses was
   accepted silently and then matched strangers better than the real
   person, and nothing in the app could reveal why.
+- A sports job's notification link falls back to Cricbuzz's live-score
+  page (`_scoreboard_url()` in `worker.py`) - a real cricket alert
+  shipped with `link=None` until this existed, because the link logic
+  only ever checked for a stream `seek_url` or a `url` param, both
+  Track B concepts. The bare match id resolves with no slug needed.
 
 Alerts carry **where in the stream** they happened, not just the wall
 clock: yt-dlp's `release_timestamp` gives the stream's start, so an

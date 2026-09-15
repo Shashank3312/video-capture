@@ -302,7 +302,7 @@ PHASE 4 - Turn into a personal notifying service (single user, both
   - Done when: you receive a real push notification on your own
     phone, tap it, and land on the live event, for both an A-track and
     a B-track job.
-  - Built and verified (2026-09-14), B-track half complete:
+  - Built and verified (2026-09-14), B-track:
       * a job started from the phone ran a real watcher, alerted, and
         the notification arrived on the phone
       * tapping it opened the live YouTube stream - the tap-through is
@@ -311,9 +311,17 @@ PHASE 4 - Turn into a personal notifying service (single user, both
       * jobs that find nothing now notify too ("time's up, they never
         showed"), with a "watch again" button, because silence is
         indistinguishable from a crash
-  - STILL OUTSTANDING: the A-track (cricket) job has never been run
-    end to end - no match has been in progress while testing. Phase 4
-    is not finished until one is.
+  - DONE (2026-09-15). A-track verified end to end against a real live
+    ODI (Australia vs Zimbabwe, match 152731): a job for a batsman
+    already at the crease matched within one poll and notified; a
+    second job for a batsman who came in fresh after a wicket did the
+    same. Running the real test surfaced a real gap - sports jobs have
+    neither a stream url nor a seek_url, so the notification link was
+    silently None, meaning a real cricket alert had NO tap-through at
+    all despite matching correctly. Fixed by falling back to
+    Cricbuzz's live-score URL, which resolves on the bare match id
+    with no slug needed (confirmed by request). Both tracks now meet
+    the "done when" bar - Phase 4 is complete.
   - Three things cost real time here, all worth remembering:
       * A restricted Google API key blocks the tunnel domain. The
         browser reports it as "Installations: Create Installation
