@@ -109,6 +109,17 @@ def build_command(job: dict) -> list[str]:
     return command
 
 
+def _scoreboard_url(params: dict) -> str | None:
+    """Cricbuzz's live scoreboard for a sports job.
+
+    The bare match id resolves fine (no slug needed - confirmed by
+    request, not assumed), which matters because watch.py never fetches
+    the slug and this must not depend on it doing so.
+    """
+    match_id = params.get("match_id")
+    return f"https://www.cricbuzz.com/live-cricket-scores/{match_id}" if match_id else None
+
+
 def _notify(job: dict, event: dict):
     """Turn an alert into the notification the user is waiting for."""
     params = job["params"]
@@ -116,6 +127,8 @@ def _notify(job: dict, event: dict):
     where = event.get("stream_position")
     if event.get("kind") == "name":
         body = f"Heard {params.get('listen_for')!r}: {event.get('heard', '')[:120]}"
+    elif event.get("kind") == "sport":
+        body = f"{event.get('heard', 'They are on now')} - tap to watch the scoreboard."
     else:
         body = "They're on screen now - tap to watch."
     if where:
@@ -128,7 +141,12 @@ def _notify(job: dict, event: dict):
         # Prefer the link that seeks to the moment itself. A
         # notification gets read minutes later, by which point the live
         # edge has moved on and is no longer where the thing happened.
-        link=event.get("seek_url") or params.get("url"),
+        # Sports jobs have neither a seek_url nor a url param - they
+        # carry match_id/player instead - so without the scoreboard
+        # fallback a real cricket alert shipped with NO tap-through at
+        # all, silently failing the one thing the plan requires: "a
+        # tap-through link back to the live stream or scoreboard".
+        link=event.get("seek_url") or params.get("url") or _scoreboard_url(params),
     )
     # Record delivery in its own field: the job finishing will overwrite
     # progress, and "did they actually get told" must not be the thing
