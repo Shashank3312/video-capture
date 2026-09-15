@@ -21,16 +21,29 @@ Two watcher tracks:
   batting/bowling/etc. Cheapest track, built first.
 - **Track B (general stream watcher)**: pulls a live video stream,
   samples frames, and face-matches against reference photos, for local
-  events and pre-release/political events. Phases 1 and 2 are built
-  and verified (local file, then a real YouTube Live stream). Still to
-  come: the opt-in add-on that runs speech-to-text on the stream's
-  audio to catch the person's name being mentioned, as a
-  lower-confidence secondary signal (Phase 3).
+  events and pre-release/political events. Also runs speech-to-text on
+  the stream's audio to catch the person's NAME being said - which
+  measures as the more reliable of the two signals.
 
 Build order is deliberately phased (Phase 0 through Phase 8 in
 `implementation_plan.txt`): single-user MVP (Phases 0-4) before any
 multi-user/scaling work (Phases 5+), and Track A before Track B. Don't
 skip ahead.
+
+**Where it stands.** Phases 0-3 are built and verified. Phase 4 (the
+app) is built and verified for Track B end to end: a job started from
+a phone alerts, the notification arrives, and tapping it opens the
+stream at the moment it happened.
+
+Still outstanding, and worth knowing before starting anything new:
+- **Phase 4's cricket job has never run end to end** - no match has
+  been in progress during testing. Everything for it is in place now,
+  including JSON reporting, so it needs a live match and ten minutes.
+- **Phase 1's manual accuracy check never happened.** Its bar is
+  "correctly flags presence at the right timestamps on at least 2
+  manually-checked test videos". Accuracy has since been measured far
+  more rigorously than that (see the threshold note below), but nobody
+  has confirmed the output against human eyes.
 
 ## Track A: sports scoreboard watcher (`track_a_sports/`)
 
@@ -71,7 +84,12 @@ Scripts:
   if not), then polls the scorecard, alerts once on the transition
   into batting/bowling (immediately if already batting/mid-over when
   it starts watching), prints `Task completed.`, and exits. It's
-  single-shot by design, not a continuous monitor.
+  single-shot by design, not a continuous monitor. `--json` makes it
+  emit events the Phase 4 worker can read, and `--max-minutes` lets a
+  job give up rather than polling forever. Both tracks must keep
+  speaking the same event format: the worker only reads lines that
+  parse as JSON, so a watcher printing prose is a watcher the app
+  cannot hear, however well it works at a terminal.
 
 Other sports (beyond cricket) need their own API research when work
 reaches them. Kabaddi was researched and paused - not a feasibility
@@ -120,9 +138,9 @@ Approach, and why:
 - Uses **DeepFace** (`DeepFace.represent()`) to get one face embedding
   per reference photo, then compares every sampled frame's face
   embedding against all reference embeddings with
-  `deepface.modules.verification.find_distance()` /
-  `find_threshold()` - DeepFace's own pre-tuned per-model thresholds,
-  not a guessed similarity cutoff.
+  `deepface.modules.verification.find_distance()`. The cutoff is
+  `match_threshold()`, NOT DeepFace's `find_threshold()` - see the
+  threshold note under Phase 2 for the measurements behind that.
 - Samples the video at a fixed interval (default 1s), not every frame
   - most of a video is redundant for this purpose.
 - **Every** face in a sampled frame is compared, not just the first one
@@ -296,9 +314,32 @@ recurring word.
   formats report it as `None`, so requiring it silently excludes
   exactly the formats you want.
 
-No test suite yet - Phase 1's own "done" bar (see
-`implementation_plan.txt`) is honest accuracy checking against
-manually-verified timestamps on real test videos, not automated tests.
+## Verification: there is no test suite
+
+Nothing here is checked by automated tests, and the phases don't ask
+for them - they ask for honest measurement against real footage. That
+has been the pattern throughout, and it has repeatedly overturned
+plausible assumptions:
+
+- A detector was picked by benchmarking 9 of them on byte-identical
+  frames, not from published numbers (`benchmark_detectors.py`).
+- The crowd-skipping rule was built by face COUNT, then rewritten by
+  face SIZE after real footage showed the strongest matches were in
+  14- and 16-face frames.
+- The match threshold was moved off DeepFace's default only after
+  measuring true and false distances on a live stream.
+- Memory was called stable at 30 minutes, then shown to drift
+  ~300 MB/hour over a full hour.
+
+So when changing anything in the matching path, the expectation is a
+measurement on real footage, with the numbers written into the comment
+next to the constant. Several constants carry their evidence inline
+for exactly this reason - `DEFAULT_MIN_FACE_AREA`, `TUNED_THRESHOLDS`,
+the detector table in `watch_local_video.py`'s docstring - and they
+should not be changed without re-measuring.
+
+Ad-hoc verification scripts get written into the scratchpad rather
+than the repo; only `benchmark_detectors.py` was worth keeping.
 
 ## Phase 4: the notifying service (`app/`)
 
@@ -339,7 +380,23 @@ exact hostname. A fixed address is a Phase 6 deployment question.
 - `push.py` - FCM. Optional: with no service account key the app still
   runs jobs, it just says notifications are off.
 - `cricket.py` - live matches for the picker, because a Cricbuzz match
-  id is an internal number no user can know.
+  id is an internal number no user can know. The API answers **204 No
+  Content with an empty body** when no cricket is on, which is a
+  success code, so `raise_for_status()` passes and `.json()` then dies
+  with "Expecting value: line 1 column 1" - a parse error that reads
+  like a broken API rather than a quiet afternoon.
+- `POST /api/check-photo` returns the exact face crop a reference
+  photo yields, so a user can see what will actually be searched for
+  before starting a job. Added because a photo in sunglasses was
+  accepted silently and then matched strangers better than the real
+  person, and nothing in the app could reveal why.
+
+Alerts carry **where in the stream** they happened, not just the wall
+clock: yt-dlp's `release_timestamp` gives the stream's start, so an
+alert reports "2:14:07 into the stream" and the notification links to
+`?t=<seconds>`. This matters more than it sounds - a notification is
+read minutes later, by which point a link to the stream lands on the
+live edge, which is never where the thing happened.
 
 Things that cost hours and will again:
 - **A restricted Google API key blocks the tunnel domain.** The
