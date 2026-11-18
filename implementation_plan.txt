@@ -237,6 +237,27 @@ PHASE 2 - Track B on a real live stream
         hosting tiers. Worth re-measuring before any all-day watch.
       * That 3.5 GB floor is the real deployment constraint for Phase
         6, more than CPU is.
+  - KNOWN LIMITATION (2026-11-18) - video + audio together cannot keep
+    up on this laptop, and the soak above was luckier than it looked.
+    Same code, packages and machine as September, but CPU is the
+    constraint too, not just memory:
+      * Live, both on: 30s audio windows took 70-110s (~0.3x real
+        time), so every name alert arrived later than the last, with
+        no bound. Audio alone, same day: 12-26s per window, keeps up.
+      * Whisper small alone on a fixed 30s chunk: 23-36s, varying run
+        to run on this laptop - right at real time, no headroom. More
+        CPU threads did not help (8/12/16 same or slower).
+      * beam_size 1 instead of 5: 1.6-1.9x faster, but lost all 4 NTR
+        mentions on the test clip. Rejected - keep beam 5.
+      * Tried and REVERTED: pausing face matching while audio
+        transcribes. Audio improved to 46-57s per window, still behind,
+        while face checks fell from 101 to 18 frames in 5 minutes. With
+        faces paused, the remaining cost is most likely the frame
+        reader decoding 720p30 continuously - not yet measured alone.
+    Untried levers, both of which change face accuracy and so need
+    measuring first: a lower video rendition, or decoding fewer
+    frames. For Phase 6/7, a host has to run video + audio for one
+    job in real time before it can run several.
   - KNOWN LIMITATION - false face alerts. Watching a US news stream
     with reference photos of a Telugu actor still produced 2 alerts in
     4 minutes, at distances 0.658-0.671 against a 0.680 threshold. The
@@ -344,10 +365,28 @@ PHASE 4 - Turn into a personal notifying service (single user, both
         constructor: it must go through the service worker
         registration. A notification arriving while the app was on
         screen silently never appeared.
-  - Known gap: jobs started from the phone carry no YouTube cookies,
-    so they depend on the bot check not firing. It didn't during
-    testing, but it is inconsistent rather than absent - the server
-    should fall back to a local cookies file.
+  - FIXED: jobs started from the phone carry no YouTube cookies, so
+    the worker falls back to a local cookies file (default_cookies()
+    in app/worker.py, or YT_COOKIES).
+  - RE-VERIFIED (2026-11-18), after two months untouched: Phases 0-4
+    all still work, including a cricket notification arriving on the
+    phone and tapping through to the Cricbuzz scoreboard. Found:
+      * The seek link is wrong for 24/7 streams. It is "seconds since
+        the stream started", which for Al Jazeera's always-on stream
+        was ?t=116612509s (3.7 years), far past YouTube's live rewind
+        window. It is also built on the channel's /live address, which
+        later points at whatever is live then, not this stream's
+        watch?v= link.
+      * The match picker (app/cricket.py) lists only state
+        "In Progress", so a match vanishes from the phone during
+        Stumps, Toss, Innings Break and the like - exactly when a user
+        would set up "tell me when he bats tomorrow". watch.py itself
+        handles those matches fine.
+      * The cricket API's free plan is 200 requests/month - one 3 hour
+        match polled every 60s is ~180. Fine for one user, not more.
+      * yt-dlp (2026.08.19) now warns it is over 90 days old, and that
+        YouTube extraction without a JS runtime (deno) is deprecated.
+        Still works; it is the first thing to update if YouTube breaks.
   - Known gap: no authentication. Anyone who can reach the tunnel can
     start jobs. Acceptable for a personal test behind a temporary URL,
     and exactly what Phase 5 addresses.
