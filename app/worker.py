@@ -18,6 +18,7 @@ the push notification the user is actually waiting for.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -25,7 +26,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import push, storage
+from . import people, push, storage
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TRACK_B = PROJECT_ROOT / "track_b_video"
@@ -97,7 +98,10 @@ def build_command(job: dict) -> list[str]:
     ]
     if params.get("max_minutes"):
         command += ["--max-minutes", str(params["max_minutes"])]
-    cookies = params.get("cookies") or default_cookies()
+    # Never a path from the job itself: a caller-supplied cookies path
+    # would let any signed-in user make the server read an arbitrary
+    # file on its own disk, so only the server's own export is used.
+    cookies = default_cookies()
     if cookies:
         command += ["--cookies", cookies]
     if params.get("listen_for"):
@@ -135,7 +139,7 @@ def _notify(job: dict, event: dict):
         body += f" ({where} into the stream)"
 
     sent, error = push.send(
-        storage.list_device_tokens(),
+        storage.list_device_tokens(job["user_id"]),
         title=f"Don't Miss The Moment: {title[:60]}",
         body=body,
         # Prefer the link that seeks to the moment itself. A
@@ -172,7 +176,7 @@ def _notify_outcome(job: dict, status: str, reason: str):
         body = f"{reason}. Tap to try again."
 
     sent, error = push.send(
-        storage.list_device_tokens(),
+        storage.list_device_tokens(job["user_id"]),
         title=f"{heading}: {title[:50]}",
         body=body,
         # Land on the app rather than the stream: there's nothing to
@@ -238,7 +242,22 @@ def _handle_event(job: dict, event: dict):
 
 
 def run_job(job_id: str):
-    """Run one job to completion. Blocks, so call it on a thread."""
+    """Run one job to completion. Blocks, so call it on a thread.
+
+    A job's own copy of its reference photos is a real person's face
+    sitting on disk, so it is removed on EVERY way out - finished,
+    failed to build, failed to start, or the watcher dying. Cancelling
+    terminates the process, which ends the loop below and lands here too.
+    Only the job's own folder goes; saved people's photos live elsewhere
+    and are never touched.
+    """
+    try:
+        _run_job(job_id)
+    finally:
+        shutil.rmtree(people.UPLOADS_DIR / job_id, ignore_errors=True)
+
+
+def _run_job(job_id: str):
     job = storage.get_job(job_id)
     if job is None:
         return
