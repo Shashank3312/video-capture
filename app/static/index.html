@@ -53,6 +53,24 @@
   .hit b { color: var(--good); font-weight: 600; font-variant-numeric: tabular-nums; }
   .banner { padding: 10px 12px; border-radius: 10px; font-size: 13px; margin-bottom: 14px; }
   .banner.warn { background: #2a1f12; border: 1px solid #4a3618; color: #f0c27a; }
+  input[type=checkbox] { width: auto; margin-right: 8px; }
+  button.small { width: auto; margin-top: 8px; padding: 6px 12px; font-size: 13px; }
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+         font-size: 13px; color: var(--dim); margin-bottom: 14px; }
+  .bar button { margin: 0; }
+  .person { border-top: 1px solid var(--line); padding: 12px 0; font-size: 14px; }
+  .person:first-of-type { border-top: none; }
+  .person .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .person .row .actions { display: flex; gap: 6px; }
+  .person .row .actions button { margin: 0; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .thumb { position: relative; width: 64px; height: 64px; }
+  .thumb img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px;
+               background: #0c1014; border: 1px solid var(--line); }
+  .thumb button { position: absolute; top: -6px; right: -6px; width: 22px; height: 22px;
+                  padding: 0; margin: 0; border-radius: 50%; font-size: 14px; line-height: 1;
+                  background: var(--bad); }
+  .error-text { color: var(--bad); font-size: 13px; margin-top: 10px; }
   .hide { display: none; }
 </style>
 </head>
@@ -60,84 +78,132 @@
   <h1>Don't Miss The Moment</h1>
   <div class="sub">Watch an event for someone, and get told the second they show up.</div>
 
-  <div id="pushBanner" class="banner warn hide">
-    <div id="pushMessage"></div>
-    <button class="ghost" id="enableBtn"
-            style="width:auto;margin-top:10px;padding:8px 14px;font-size:13px">
-      Enable notifications
-    </button>
+  <div id="signedOut" class="card hide">
+    <button type="button" id="signInBtn" style="margin-top:0">Sign in with Google</button>
+    <div id="signInError" class="error-text hide"></div>
   </div>
 
-  <div class="card">
-    <label>What should I do?</label>
-    <div class="modes">
-      <button type="button" data-kind="video" aria-pressed="true">Watch a face</button>
-      <button type="button" data-kind="audio" aria-pressed="false">Listen for a name</button>
-      <button type="button" data-kind="sports" aria-pressed="false">Cricket</button>
+  <div id="app" class="hide">
+    <div class="bar">
+      <span id="whoAmI"></span>
+      <button type="button" class="ghost small" id="signOutBtn">Sign out</button>
     </div>
 
-    <form id="jobForm">
-      <div data-for="video audio">
-        <label>Live stream link</label>
-        <input name="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong style="font-size:15px">Saved people</strong>
+        <button class="ghost small" style="margin:0" id="addPersonBtn">+ Add a person</button>
       </div>
-
-      <div data-for="video">
-        <label>Reference photo of the person</label>
-        <input type="file" name="photo" accept="image/*" id="photoInput">
-        <div class="muted">
-          Face must be clearly visible - <b>no sunglasses</b>, well lit, looking roughly
-          at the camera. Covered eyes make matching unreliable.
+      <form id="personForm" class="hide">
+        <label>Name</label>
+        <input id="pName" placeholder="Ram Charan" autocomplete="off">
+        <label>Name or phrase to listen for (optional - defaults to the name)</label>
+        <input id="pPhrase" autocomplete="off">
+        <label>Player name for cricket (optional - defaults to the name)</label>
+        <input id="pPlayer" autocomplete="off">
+        <label>Photos (optional, clear face, no sunglasses)</label>
+        <input type="file" id="pPhotos" accept="image/*" multiple>
+        <div id="pPhotoList"></div>
+        <div style="display:flex;gap:8px">
+          <button type="submit" id="pSave">Save person</button>
+          <button type="button" class="ghost" id="pCancel">Cancel</button>
         </div>
-        <div id="photoCheck" class="hide"></div>
-      </div>
-
-      <div data-for="audio">
-        <label>Name or phrase to listen for</label>
-        <input name="listen_for" placeholder="Ram Charan" autocomplete="off">
-      </div>
-
-      <div data-for="video" class="hide" id="alsoListen">
-        <label>Also listen for a name (optional)</label>
-        <input name="listen_for_video" placeholder="leave blank to only watch" autocomplete="off">
-      </div>
-
-      <div data-for="sports">
-        <label>Which match?</label>
-        <select name="match_id" id="matchPicker">
-          <option value="">Loading live matches...</option>
-        </select>
-        <div class="muted" id="matchNote"></div>
-        <label>Player</label>
-        <input name="player" placeholder="e.g. Virat Kohli" autocomplete="off">
-      </div>
-
-      <div data-for="video audio">
-        <label>Stop after (minutes, optional)</label>
-        <input name="max_minutes" type="number" min="1" placeholder="leave blank to watch until it ends">
-
-        <label>Tell me</label>
-        <select name="alert_mode">
-          <option value="once">Once, then stop</option>
-          <option value="cooldown">Each time, but not more than once every 5 min</option>
-          <option value="every">Every single time</option>
-        </select>
-      </div>
-
-      <button type="submit" id="startBtn">Start watching</button>
-    </form>
-  </div>
-
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <strong style="font-size:15px">Your jobs</strong>
-      <button class="ghost" style="width:auto;margin:0;padding:8px 12px;font-size:13px" id="testBtn">Test notification</button>
+      </form>
+      <div id="peopleList" class="muted" style="margin-top:12px">Nobody saved yet.</div>
     </div>
-    <div id="jobs" class="muted" style="margin-top:12px">Nothing yet.</div>
+
+    <div id="pushBanner" class="banner warn hide">
+      <div id="pushMessage"></div>
+      <button class="ghost" id="enableBtn"
+              style="width:auto;margin-top:10px;padding:8px 14px;font-size:13px">
+        Enable notifications
+      </button>
+    </div>
+
+    <div class="card">
+      <label>What should I do?</label>
+      <div class="modes">
+        <button type="button" data-kind="video" aria-pressed="true">Watch a face</button>
+        <button type="button" data-kind="audio" aria-pressed="false">Listen for a name</button>
+        <button type="button" data-kind="sports" aria-pressed="false">Cricket</button>
+      </div>
+
+      <form id="jobForm">
+        <label>Who?</label>
+        <select id="whoPicker"></select>
+        <div class="muted" id="whoNote"></div>
+
+        <div data-for="video audio">
+          <label>Live stream link</label>
+          <input name="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+        </div>
+
+        <div data-for="video">
+          <label>Reference photo of the person</label>
+          <input type="file" name="photo" accept="image/*" id="photoInput">
+          <div class="muted">
+            Face must be clearly visible - <b>no sunglasses</b>, well lit, looking roughly
+            at the camera. Covered eyes make matching unreliable.
+          </div>
+          <div id="photoCheck" class="hide"></div>
+        </div>
+
+        <div data-for="audio">
+          <label>Name or phrase to listen for</label>
+          <input name="listen_for" placeholder="Ram Charan" autocomplete="off">
+        </div>
+
+        <div data-for="video" class="hide" id="alsoListen">
+          <label>Also listen for a name (optional)</label>
+          <input name="listen_for_video" placeholder="leave blank to only watch" autocomplete="off">
+        </div>
+
+        <div data-for="sports">
+          <label>Which match?</label>
+          <select name="match_id" id="matchPicker">
+            <option value="">Loading live matches...</option>
+          </select>
+          <div class="muted" id="matchNote"></div>
+          <label>Player</label>
+          <input name="player" placeholder="e.g. Virat Kohli" autocomplete="off">
+        </div>
+
+        <div data-for="video audio">
+          <label>Stop after (minutes, optional)</label>
+          <input name="max_minutes" type="number" min="1" placeholder="leave blank to watch until it ends">
+
+          <label>Tell me</label>
+          <select name="alert_mode">
+            <option value="once">Once, then stop</option>
+            <option value="cooldown">Each time, but not more than once every 5 min</option>
+            <option value="every">Every single time</option>
+          </select>
+        </div>
+
+        <div id="saveBox">
+          <label style="display:flex;align-items:center;color:var(--text)">
+            <input type="checkbox" id="saveCheck"> Save this person to watch them again
+          </label>
+          <input id="saveName" class="hide" placeholder="Their name" autocomplete="off">
+        </div>
+
+        <button type="submit" id="startBtn">Start watching</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong style="font-size:15px">Your jobs</strong>
+        <button class="ghost" style="width:auto;margin:0;padding:8px 12px;font-size:13px" id="testBtn">Test notification</button>
+      </div>
+      <div id="jobs" class="muted" style="margin-top:12px">Nothing yet.</div>
+    </div>
+
   </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="/firebase-config.js"></script>
 <script src="/app.js"></script>
 </body>
