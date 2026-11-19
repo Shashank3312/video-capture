@@ -63,3 +63,35 @@ def test_job_photo_copy_is_deleted_even_if_the_watcher_cannot_start(two_users, m
     worker.run_job(job_id)
     assert not folder.exists()
     assert storage.get_job(job_id)["status"] == storage.FAILED
+
+
+def test_an_error_while_handling_events_fails_the_job_without_hanging(two_users, monkeypatch, tmp_path):
+    import time
+    job_id, folder, _ = _job_with_photos(two_users[0], monkeypatch, tmp_path)
+    code = ("import time\n"
+            "print('{\"event\": \"started\", \"title\": \"t\"}', flush=True)\n"
+            "print('{\"event\": \"alert\", \"at\": \"now\"}', flush=True)\n"
+            "time.sleep(30)")
+    monkeypatch.setattr(worker, "build_command", lambda job: [sys.executable, "-c", code])
+    real = worker._handle_event
+
+    def handle(job, event):
+        if event.get("event") == "alert":
+            raise RuntimeError("push exploded")
+        real(job, event)
+
+    monkeypatch.setattr(worker, "_handle_event", handle)
+    start = time.time()
+    worker.run_job(job_id)
+    assert time.time() - start < 15
+    job = storage.get_job(job_id)
+    assert job["status"] == storage.FAILED
+    assert "RuntimeError" in job["progress"]
+    assert not folder.exists()
+
+
+def test_cleanup_never_removes_the_uploads_dir_itself(monkeypatch, tmp_path):
+    monkeypatch.setattr(people, "UPLOADS_DIR", tmp_path)
+    (tmp_path / "keep.jpg").write_bytes(b"x")
+    worker.run_job("")
+    assert (tmp_path / "keep.jpg").exists()

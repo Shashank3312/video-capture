@@ -124,6 +124,15 @@ def _scoreboard_url(params: dict) -> str | None:
     return f"https://www.cricbuzz.com/live-cricket-scores/{match_id}" if match_id else None
 
 
+def _send(tokens, **kwargs) -> tuple[int, str | None]:
+    """push.send that cannot raise: a notification failure is recorded in
+    `notified`, never allowed to take down a job that did find them."""
+    try:
+        return push.send(tokens, **kwargs)
+    except Exception as exc:
+        return 0, f"{type(exc).__name__}: {exc}"
+
+
 def _notify(job: dict, event: dict):
     """Turn an alert into the notification the user is waiting for."""
     params = job["params"]
@@ -138,7 +147,7 @@ def _notify(job: dict, event: dict):
     if where:
         body += f" ({where} into the stream)"
 
-    sent, error = push.send(
+    sent, error = _send(
         storage.list_device_tokens(job["user_id"]),
         title=f"Don't Miss The Moment: {title[:60]}",
         body=body,
@@ -175,7 +184,7 @@ def _notify_outcome(job: dict, status: str, reason: str):
         heading = "The watch stopped"
         body = f"{reason}. Tap to try again."
 
-    sent, error = push.send(
+    sent, error = _send(
         storage.list_device_tokens(job["user_id"]),
         title=f"{heading}: {title[:50]}",
         body=body,
@@ -254,7 +263,10 @@ def run_job(job_id: str):
     try:
         _run_job(job_id)
     finally:
-        shutil.rmtree(people.UPLOADS_DIR / job_id, ignore_errors=True)
+        # An empty or path-like id must never resolve to UPLOADS_DIR
+        # itself, which also holds the saved people's photos.
+        if job_id and Path(job_id).name == job_id:
+            shutil.rmtree(people.UPLOADS_DIR / job_id, ignore_errors=True)
 
 
 def _run_job(job_id: str):
@@ -294,6 +306,7 @@ def _run_job(job_id: str):
         _processes[job_id] = process
 
     saw_finish = False
+    handler_error = None
     try:
         for line in process.stdout:
             line = line.strip()
@@ -306,6 +319,14 @@ def _run_job(job_id: str):
             if event.get("event") == "finished":
                 saw_finish = True
             _handle_event(job, event)
+    except Exception as exc:
+        # Anything raised while handling an event (a push failure, a
+        # database error) must not strand the job: stop the watcher, or
+        # the wait below blocks on a live process, and fall through to
+        # the resolve-to-FAILED step. Every job ends matched / expired /
+        # failed, never silently RUNNING.
+        process.terminate()
+        handler_error = exc
     finally:
         process.wait()
         with _processes_lock:
@@ -314,13 +335,13 @@ def _run_job(job_id: str):
     # A watcher that dies without a "finished" event still has to
     # resolve to something - going quiet is the one outcome the plan
     # rules out.
-    if not saw_finish:
+    if not saw_finish or handler_error is not None:
         current = storage.get_job(job_id)
         if current and current["status"] not in storage.FINISHED_STATES:
-            storage.update_job(
-                job_id, status=storage.FAILED, outcome="failed",
-                progress=f"the watcher stopped unexpectedly: {_last_error(log_path)}",
-            )
+            reason = (f"the app hit an error while handling the watcher's output: {type(handler_error).__name__}"
+                      if handler_error is not None
+                      else f"the watcher stopped unexpectedly: {_last_error(log_path)}")
+            storage.update_job(job_id, status=storage.FAILED, outcome="failed", progress=reason)
 
 
 def start_job(job_id: str):
