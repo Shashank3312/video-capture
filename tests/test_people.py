@@ -72,3 +72,25 @@ def test_copy_photos_to(two_users, tmp_path):
     dest = tmp_path / "job" / "photos"
     assert people.copy_photos_to(p["id"], dest) == 2
     assert sorted(f.name for f in dest.iterdir()) == sorted([ids[0] + ".jpg", ids[1] + ".png"])
+
+
+def test_bad_extensions_rejected_and_webp_accepted(two_users):
+    a = two_users[0]
+    p = people.create_person(a, "X")
+    for name in ("photo.jpg.exe", "noextension"):
+        with pytest.raises(people.BadPhoto):
+            people.add_photo(p["id"], a, name, io.BytesIO(b"x"))
+    assert people.add_photo(p["id"], a, "face.webp", io.BytesIO(b"w")) is not None
+
+
+def test_failed_write_leaves_no_file_or_row(two_users, tmp_path):
+    class Broken:
+        def read(self, n=-1):
+            raise OSError("client went away")
+
+    a = two_users[0]
+    p = people.create_person(a, "X")
+    with pytest.raises(OSError):
+        people.add_photo(p["id"], a, "a.jpg", Broken())
+    assert list((tmp_path / "people" / p["id"]).iterdir()) == []
+    assert people.get_person(p["id"], a)["photos"] == []

@@ -130,9 +130,9 @@ def add_photo(person_id: str, user_id: str, filename: str, data: BinaryIO) -> di
     folder = people_dir() / person_id
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / (photo_id + ext)
-    with open(path, "wb") as f:
-        shutil.copyfileobj(data, f)
     try:
+        with open(path, "wb") as f:
+            shutil.copyfileobj(data, f)
         with connection() as conn:
             conn.execute(
                 "INSERT INTO person_photos (id, person_id, filename, created_at) "
@@ -140,7 +140,8 @@ def add_photo(person_id: str, user_id: str, filename: str, data: BinaryIO) -> di
                 (photo_id, person_id, photo_id + ext, _now()),
             )
     except Exception:
-        # No row means nothing would ever delete this file.
+        # A failed copy or insert leaves no row, so nothing would ever
+        # delete this (possibly partial) face image.
         path.unlink(missing_ok=True)
         raise
     return {"id": photo_id}
