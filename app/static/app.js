@@ -378,7 +378,7 @@ async function checkPhoto(file) {
       ok: true,
       html: `
         <div class="facecheck">
-          <img src="data:image/jpeg;base64,${d.crop}" alt="detected face">
+          <img src="data:image/jpeg;base64,${escapeHtml(d.crop)}" alt="detected face">
           <div>
             <div>This is the face I'll look for (${d.size}px).</div>
             <div class="muted">Can you see the eyes clearly? If not, matching will be poor.</div>
@@ -877,15 +877,15 @@ async function loadJobs() {
     .map(
       (job) => `
       <div class="job">
-        <div class="status ${job.status}">${label(job)}</div>
+        <div class="status ${escapeHtml(job.status)}">${label(job)}</div>
         <div>${escapeHtml(describe(job))}</div>
         ${job.progress ? `<div class="muted">${escapeHtml(job.progress)}</div>` : ""}
         ${alertTimes(job)}
         ${
           !done(job.status)
-            ? `<button class="ghost" ${smallBtn} data-cancel="${job.id}">Stop</button>`
+            ? `<button class="ghost" ${smallBtn} data-cancel="${escapeHtml(job.id)}">Stop</button>`
             : job.restartable
-              ? `<button class="ghost" ${smallBtn} data-restart="${job.id}">Watch again</button>`
+              ? `<button class="ghost" ${smallBtn} data-restart="${escapeHtml(job.id)}">Watch again</button>`
               : `<div class="muted" style="margin-top:8px">save this person to watch them again</div>`
         }
       </div>`
@@ -947,10 +947,13 @@ function label(job) {
   return job.status;
 }
 
+// Also escapes quotes: this is interpolated into double-quoted attribute
+// values too, where a bare " truncated a person's name in the edit form
+// (and let a crafted one inject attributes).
 function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text ?? "";
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 $("#testBtn").addEventListener("click", async () => {
