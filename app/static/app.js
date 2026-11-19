@@ -6,6 +6,10 @@ let kind = "video";
 let isOwner = false;
 let signedIn = false;
 let jobsTimer = null;
+// Bumped on every sign-in and sign-out. A response fetched with one
+// user's token must never be rendered for the next user, so each loader
+// notes this before its request and drops the answer if it changed.
+let session = 0;
 
 const $ = (sel) => document.querySelector(sel);
 const banner = $("#pushBanner");
@@ -42,7 +46,7 @@ async function api(path, options = {}) {
 
   if (res.status === 401) {
     signOutReason = "Your sign-in has expired. Please sign in again.";
-    firebase.auth().signOut();
+    signOutQuietly();
     throw new AuthError("sign in first");
   }
   if (res.status === 403) {
@@ -52,11 +56,16 @@ async function api(path, options = {}) {
     const data = await res.clone().json().catch(() => null);
     if (detailOf(data, "") === INVITE_ONLY) {
       signOutReason = INVITE_ONLY.charAt(0).toUpperCase() + INVITE_ONLY.slice(1) + ".";
-      firebase.auth().signOut();
+      signOutQuietly();
       throw new AuthError(INVITE_ONLY);
     }
   }
   return res;
+}
+
+function signOutQuietly() {
+  // A failed sign-out must not become an unhandled rejection.
+  return firebase.auth().signOut().catch(() => {});
 }
 
 function showSignInScreen(message) {
@@ -100,7 +109,7 @@ async function signIn() {
 }
 
 $("#signInBtn").addEventListener("click", signIn);
-$("#signOutBtn").addEventListener("click", () => firebase.auth().signOut());
+$("#signOutBtn").addEventListener("click", signOutQuietly);
 
 async function startSession(user) {
   // Ask the server who this is before showing anything: it decides
@@ -112,14 +121,14 @@ async function startSession(user) {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       signOutReason = detailOf(data, "Couldn't sign in.");
-      firebase.auth().signOut();
+      signOutQuietly();
       return;
     }
     me = data;
   } catch (err) {
     if (err instanceof AuthError) return; // api() already signed out
     signOutReason = "Couldn't reach the server: " + err.message;
-    firebase.auth().signOut();
+    signOutQuietly();
     return;
   }
   // They may have signed out while /api/me was in flight.
@@ -127,6 +136,7 @@ async function startSession(user) {
   if (!current || current.uid !== user.uid) return;
 
   signedIn = true;
+  signOutReason = "";
   isOwner = !!me.is_owner;
   $("#whoAmI").textContent = me.email;
   $("#signedOut").classList.add("hide");
@@ -135,6 +145,7 @@ async function startSession(user) {
   setUpNotifications();
   loadPeople();
   loadJobs();
+  clearInterval(jobsTimer); // a quick sign-out/in must not double the polling
   jobsTimer = setInterval(loadJobs, 4000);
 }
 
@@ -163,15 +174,20 @@ function endSession() {
   $("#photoCheck").innerHTML = "";
   $("#whoPicker").innerHTML = "";
   $("#whoAmI").textContent = "";
+  $("#whoNote").textContent = "";
   banner.classList.add("hide");
 }
 
 if (authConfigured) {
   // A redirect sign-in returns here with the result (or error) waiting.
+  // The first onAuthStateChanged(null) redraws the sign-in screen, so
+  // the error is also parked in signOutReason or it would be wiped.
   firebase.auth().getRedirectResult().catch((err) => {
-    showSignInScreen("Couldn't sign in: " + err.message);
+    signOutReason = "Couldn't sign in: " + err.message;
+    showSignInScreen(signOutReason);
   });
   firebase.auth().onAuthStateChanged((user) => {
+    session++;
     if (user) {
       startSession(user);
     } else {
@@ -407,16 +423,17 @@ function revokeThumbs() {
 }
 
 async function loadPeople() {
+  const mine = session;
   try {
     const res = await api("/api/people");
     const data = await res.json();
     if (!res.ok) throw new Error(detailOf(data, "couldn't load people"));
-    if (!signedIn) return;
+    if (!signedIn || mine !== session) return;
     people = data;
     renderPeople();
     refreshWho();
   } catch (err) {
-    if (err instanceof AuthError) return;
+    if (err instanceof AuthError || mine !== session) return;
     $("#peopleList").textContent = "Couldn't load saved people: " + err.message;
   }
 }
@@ -441,9 +458,24 @@ function renderPeople() {
             <span class="muted">(${n} photo${n === 1 ? "" : "s"})</span></div>
           <div class="actions">
             <button type="button" class="small" data-act="watch">Watch</button>
+            <button type="button" class="small ghost" data-act="edit">Edit</button>
             <button type="button" class="small ghost" data-act="delete">Delete</button>
           </div>
         </div>
+        <form data-editform class="hide">
+          <label>Name</label>
+          <input name="name" value="${escapeHtml(p.name)}" autocomplete="off">
+          <label>Name or phrase to listen for</label>
+          <input name="listen_for" placeholder="blank = same as the name"
+                 value="${escapeHtml(p.listen_for === p.name ? "" : p.listen_for)}" autocomplete="off">
+          <label>Player name for cricket</label>
+          <input name="player_name" placeholder="blank = same as the name"
+                 value="${escapeHtml(p.player_name === p.name ? "" : p.player_name)}" autocomplete="off">
+          <div style="display:flex;gap:8px">
+            <button type="submit">Save changes</button>
+            <button type="button" class="ghost" data-act="canceledit">Cancel</button>
+          </div>
+        </form>
         <div class="thumbs">
           ${p.photos
             .map(
@@ -495,6 +527,10 @@ $("#peopleList").addEventListener("click", async (event) => {
 
   if (act === "watch") {
     watchPerson(person);
+  } else if (act === "edit") {
+    card.querySelector("[data-editform]").classList.toggle("hide");
+  } else if (act === "canceledit") {
+    card.querySelector("[data-editform]").classList.add("hide");
   } else if (act === "delete") {
     if (!confirm(`Delete ${person.name}? Their photos are deleted too.`)) return;
     btn.disabled = true;
@@ -523,6 +559,38 @@ $("#peopleList").addEventListener("click", async (event) => {
     card.querySelector("[data-addbox]").innerHTML = "";
     card.querySelector("input[data-act=addphoto]").value = "";
   }
+});
+
+// Editing matters most for the player name: Cricbuzz matching depends
+// on it being spelled right, and the alternative was deleting the
+// person and every photo to fix a typo. Blank phrase/player is sent as
+// blank, which the server reads as "follow the name again".
+$("#peopleList").addEventListener("submit", async (event) => {
+  const form = event.target.closest("form[data-editform]");
+  if (!form) return;
+  event.preventDefault();
+  const person = personById(form.closest("[data-person]").dataset.person);
+  if (!person) return;
+  const name = form.elements.name.value.trim();
+  if (!name) {
+    alert("A person needs a name.");
+    return;
+  }
+  const body = new FormData();
+  body.append("name", name);
+  body.append("listen_for", form.elements.listen_for.value.trim());
+  body.append("player_name", form.elements.player_name.value.trim());
+  const btn = form.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/people/${person.id}`, { method: "PATCH", body });
+    if (!res.ok) throw new Error(detailOf(await res.json().catch(() => null), "couldn't save the changes"));
+  } catch (err) {
+    if (!(err instanceof AuthError)) alert(err.message);
+    btn.disabled = false;
+    return;
+  }
+  loadPeople();
 });
 
 async function removeThing(path, what) {
@@ -788,6 +856,7 @@ function describe(job) {
 
 async function loadJobs() {
   if (!signedIn) return;
+  const mine = session;
   let jobs;
   try {
     const res = await api("/api/jobs");
@@ -796,7 +865,7 @@ async function loadJobs() {
   } catch (err) {
     return; // signed out, or a blip: the next poll tries again
   }
-  if (!signedIn) return;
+  if (!signedIn || mine !== session) return;
   const box = $("#jobs");
   if (!jobs.length) {
     box.textContent = "Nothing yet.";
