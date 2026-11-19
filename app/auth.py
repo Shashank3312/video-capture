@@ -23,6 +23,9 @@ from app import push, storage
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
+_UNAVAILABLE = "the server can't check sign-ins right now"
+
+
 @dataclass(frozen=True)
 class User:
     id: str
@@ -43,6 +46,19 @@ def email_allowed(email: str, setting: str | None) -> bool:
     return "*" in entries or email.strip().lower() in entries
 
 
+def is_owner_email(email: str, setting: str | None) -> bool:
+    """Owner status is explicit membership only - "*" grants nobody.
+
+    Owners may start face/name (YouTube) watches. Opening those to
+    everyone is a Phase 7 decision, not something a wildcard in .env
+    should be able to do casually.
+    """
+    if setting is None:
+        return False
+    entries = [e.strip().lower() for e in setting.split(",") if e.strip()]
+    return email.strip().lower() in entries and email.strip() != "*"
+
+
 def check_access_settings() -> str | None:
     """A startup warning when the allow-list is empty, else None."""
     if not (os.environ.get("ALLOWED_EMAILS") or "").strip():
@@ -59,7 +75,10 @@ def current_user(authorization: str | None = Header(None)) -> User:
 
     # A server that can't verify anyone is a misconfiguration, not the
     # user's fault - telling them to sign in again would loop forever.
-    problem = push.configure()
+    try:
+        problem = push.configure()
+    except Exception:
+        raise HTTPException(503, _UNAVAILABLE)
     if problem:
         raise HTTPException(503, problem)
 
@@ -76,7 +95,12 @@ def current_user(authorization: str | None = Header(None)) -> User:
     ):
         raise HTTPException(403, "this app is invite-only for now")
 
-    storage.upsert_user(claims["uid"], email, claims.get("name"))
+    # Infrastructure trouble (database down) must not admit the user
+    # nor read as "sign in again"; it is the server's problem.
+    try:
+        storage.upsert_user(claims["uid"], email, claims.get("name"))
+    except Exception:
+        raise HTTPException(503, _UNAVAILABLE)
     return User(
-        claims["uid"], email, email_allowed(email, os.environ.get("OWNER_EMAILS"))
+        claims["uid"], email, is_owner_email(email, os.environ.get("OWNER_EMAILS"))
     )

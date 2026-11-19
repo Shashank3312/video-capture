@@ -95,3 +95,30 @@ def test_check_access_settings(monkeypatch):
     assert "ALLOWED_EMAILS" in auth.check_access_settings()
     monkeypatch.setenv("ALLOWED_EMAILS", "a@x.com")
     assert auth.check_access_settings() is None
+
+
+def test_wildcard_owner_setting_grants_nobody(monkeypatch):
+    monkeypatch.setenv("ALLOWED_EMAILS", "*")
+    monkeypatch.setenv("OWNER_EMAILS", "*")
+    _verify_returns(monkeypatch, {"uid": "u1", "email": "a@x.com", "email_verified": True})
+    assert auth.current_user("Bearer good").is_owner is False
+
+
+def test_configure_raising_is_503(monkeypatch):
+    def boom():
+        raise RuntimeError("firebase init blew up")
+    monkeypatch.setattr(auth.push, "configure", boom)
+    with pytest.raises(HTTPException) as exc:
+        auth.current_user("Bearer x")
+    assert exc.value.status_code == 503
+
+
+def test_database_failure_is_503_and_does_not_admit(monkeypatch):
+    monkeypatch.setenv("ALLOWED_EMAILS", "*")
+    _verify_returns(monkeypatch, {"uid": "u1", "email": "a@x.com", "email_verified": True})
+    def boom(*a):
+        raise RuntimeError("postgres down")
+    monkeypatch.setattr(auth.storage, "upsert_user", boom)
+    with pytest.raises(HTTPException) as exc:
+        auth.current_user("Bearer good")
+    assert exc.value.status_code == 503
