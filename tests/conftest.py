@@ -23,6 +23,15 @@ os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 from app import db, storage  # noqa: E402
 
 
+@pytest.fixture(autouse=True, scope="session")
+def close_pool_at_end():
+    # Storage/people tests open the pool without ever starting the app,
+    # so nothing else would close it - and an open pool stalls the
+    # interpreter's exit by ~5s per worker thread.
+    yield
+    db.close_pool()
+
+
 @pytest.fixture(autouse=True)
 def clean_db():
     db.init_db()

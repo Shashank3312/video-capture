@@ -6,6 +6,7 @@ real app/uploads.
 """
 
 import io
+import re
 
 import pytest
 from fastapi import Header
@@ -225,6 +226,35 @@ def test_photo_copy_failure_fails_the_job_instead_of_leaving_it_pending(
     assert job["status"] == storage.FAILED and "disk full" in job["progress"]
     assert not (uploads / job["id"]).exists()
     assert started == []
+
+
+def test_photo_on_a_non_face_watch_is_400_and_creates_nothing(client_as, uploads, started):
+    g = client_as(guest)
+    r = g.post("/api/jobs", data={"kind": "sports", "match_id": "1", "player": "X"},
+               files={"photo": ("face.jpg", io.BytesIO(b"img"), "image/jpeg")})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "photos are only used for face watches"
+    assert storage.list_jobs(guest.id) == [] and started == []
+    assert list(uploads.iterdir()) == []
+
+
+@pytest.mark.parametrize("filename", ["evil.py", "evil.exe", "..", "page.html"])
+def test_one_off_face_photo_must_be_an_image_type(client_as, uploads, started, filename):
+    r = client_as(owner).post("/api/jobs", data={"kind": "video", "url": "https://youtu.be/x"},
+                              files={"photo": (filename, io.BytesIO(b"x"), "application/octet-stream")})
+    assert r.status_code == 400
+    assert r.json()["detail"] == "photos must be .jpg, .jpeg, .png or .webp"
+    assert storage.list_jobs(owner.id) == [] and started == []
+    assert list(uploads.iterdir()) == []
+
+
+def test_one_off_face_photo_is_stored_under_a_generated_name(client_as, uploads):
+    r = client_as(owner).post("/api/jobs", data={"kind": "video", "url": "https://youtu.be/x"},
+                              files={"photo": ("My Face.JPG", io.BytesIO(b"img"), "image/jpeg")})
+    assert r.status_code == 200, r.text
+    (stored,) = (uploads / r.json()["id"]).iterdir()
+    assert re.fullmatch(r"[0-9a-f]{12}\.jpg", stored.name), stored.name
+    assert stored.read_bytes() == b"img"
 
 
 def test_one_off_face_watch_is_not_restartable(client_as, uploads):

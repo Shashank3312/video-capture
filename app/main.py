@@ -18,6 +18,7 @@ Run it:
 import io
 import json
 import shutil
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -59,6 +60,12 @@ def startup():
         print(f"[push] notifications are off - {problem}")
     else:
         print("[push] Firebase ready")
+
+
+@app.on_event("shutdown")
+def shutdown():
+    # Otherwise the pool's threads hold up the process exit for ~20s.
+    db.close_pool()
 
 
 @app.middleware("http")
@@ -240,16 +247,23 @@ async def create_job(
         if kind == "audio" and not listen_for:
             raise HTTPException(400, "an audio job needs something to listen for")
 
+    # A photo is only ever accepted for a face watch, and only as an
+    # image type. Anything else used to be written to disk under the
+    # sender's own filename - any file type, any job kind - and a name
+    # like ".." broke the job outright.
+    uploaded = photo is not None and bool(photo.filename)
+    if uploaded and kind != "video":
+        raise HTTPException(400, "photos are only used for face watches")
+    if uploaded and not is_allowed_photo(photo.filename):
+        raise HTTPException(400, BAD_PHOTO)
     # A saved person's photos are used instead of any one-off upload.
-    has_photo = person is None and photo is not None and bool(photo.filename)
+    has_photo = uploaded and person is None
     if kind == "video" and person is None and not has_photo:
         raise HTTPException(400, "a video job needs at least one reference photo")
 
     saving = person is None and save_person == "1"
     if saving:
         person_name = require_name(person_name, "person_name")
-        if has_photo and not is_allowed_photo(photo.filename):
-            raise HTTPException(400, BAD_PHOTO)
 
     # Read once: the same bytes go to the saved person and to the job.
     photo_bytes = await photo.read() if has_photo else None
@@ -274,9 +288,10 @@ async def create_job(
         _stage_photos(job_id, params, lambda folder: people.copy_photos_to(person_id, folder))
     elif photo_bytes is not None:
         def write_upload(folder: Path) -> int:
-            # .name only: a filename is attacker-controlled, and without
-            # this a crafted one could write outside the uploads folder.
-            (folder / Path(photo.filename).name).write_bytes(photo_bytes)
+            # Named by a fresh id plus the checked extension: the upload's
+            # filename is attacker-controlled and is never used as a path.
+            ext = Path(photo.filename).suffix.lower()
+            (folder / (uuid.uuid4().hex[:12] + ext)).write_bytes(photo_bytes)
             return 1
         _stage_photos(job_id, params, write_upload)
 

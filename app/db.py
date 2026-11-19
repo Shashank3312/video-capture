@@ -45,6 +45,23 @@ def _get_pool() -> ConnectionPool:
         return _pool
 
 
+def close_pool() -> None:
+    """Close the pool and forget it; the next connection() reopens one.
+
+    Left open, the pool's worker threads outlive everything else and
+    psycopg_pool waits ~5s per thread at interpreter exit for them
+    ("couldn't stop thread 'pool-1-worker-0'") - 20s on every test run,
+    and the same wait on every server stop. Resetting rather than just
+    closing matters because tests start the app (and so close the pool)
+    many times in one process.
+    """
+    global _pool
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.close()
+
+
 @contextmanager
 def connection():
     """A pooled connection; commits on clean exit, rolls back on error."""
